@@ -29,6 +29,9 @@ static void __kmp_alloc_task_deque(kmp_info_t *thread,
 static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
                                            kmp_task_team_t *task_team);
 static void __kmp_bottom_half_finish_proxy(kmp_int32 gtid, kmp_task_t *ptask);
+static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
+                                kmp_int32 tid);
+
 
 #ifdef BUILD_TIED_TASK_STACK
 
@@ -426,6 +429,29 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_deque_ntasks) <
                    TASK_DEQUE_SIZE(thread_data->td));
 
+  //ME1
+  if (!__kmp_schedule_task(thread, task, tid)) 
+  {
+    thread_data->td.td_deque[thread_data->td.td_deque_tail] =
+        taskdata; // Push taskdata
+    printf("Task pushed by thread %d to own queue\n", gtid);
+
+    thread_data->td.td_deque_tail =
+        (thread_data->td.td_deque_tail + 1) & TASK_DEQUE_MASK(thread_data->td);
+    TCW_4(thread_data->td.td_deque_ntasks,
+          TCR_4(thread_data->td.td_deque_ntasks) + 1); // Adjust task count
+    KMP_FSYNC_RELEASING(thread->th.th_current_task); // releasing self
+    KMP_FSYNC_RELEASING(taskdata); // releasing child
+    KA_TRACE(20,
+             ("__kmp_push_task: T#%d returning TASK_SUCCESSFULLY_PUSHED: "
+              "task=%p ntasks=%d head=%u tail=%u\n",
+              gtid, taskdata, thread_data->td.td_deque_ntasks,
+              thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
+  }
+  //ME2
+
+  //ME1
+  /*
   thread_data->td.td_deque[thread_data->td.td_deque_tail] =
       taskdata; // Push taskdata
   // Wrap index.
@@ -439,7 +465,8 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
                 "task=%p ntasks=%d head=%u tail=%u\n",
                 gtid, taskdata, thread_data->td.td_deque_ntasks,
                 thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
-
+   */
+  //ME2
   __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
 
   return TASK_SUCCESSFULLY_PUSHED;
@@ -3408,6 +3435,11 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
       kmp_thread_data_t *thread_data = &(*threads_data_p)[i];
       thread_data->td.td_thr = team->t.t_threads[i];
 
+      //ME1
+      kmp_info_t *thread = __kmp_threads[i];
+      __kmp_alloc_task_deque(thread, thread_data);
+      //ME2
+
       if (thread_data->td.td_deque_last_stolen >= nthreads) {
         // The last stolen field survives across teams / barrier, and the number
         // of threads may have changed.  It's possible (likely?) that a new
@@ -3879,6 +3911,31 @@ release_and_exit:
 
   return result;
 }
+
+// ME1
+// function to perform the scheduling algorithm and
+// give the task to the best thread
+// returns true/false depening on if the task was succesfully scheduled
+static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
+                                kmp_int32 tid) {
+  // schedule to random thread to begin with
+  kmp_int32 nthreads = thread->th.th_task_team->tt.tt_nproc;
+  kmp_int32 sched_tid = __kmp_get_random(thread) % (nthreads - 1);
+  if (sched_tid >= tid) {
+    ++sched_tid; // Adjusts random distribution to exclude self
+  }
+
+  
+  bool result = __kmp_give_task(thread, sched_tid, task, 1);
+
+  if (result) {
+    printf("Task scheduled by thread %d on thread %d \n", tid, sched_tid);
+  }
+
+  return result;
+}
+// ME2
+
 
 #define PROXY_TASK_FLAG 0x40000000
 /* The finish of the proxy tasks is divided in two pieces:
