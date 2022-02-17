@@ -3014,7 +3014,10 @@ static inline int __kmp_execute_tasks_template(
           victim_tid = -2; // no successful victim found
         }
       }
-
+      //ME1
+      if (task == NULL)
+        task = __kmp_remove_my_task(thread, gtid, task_team, is_constrained);
+      //ME2
       if (task == NULL)
         break; // break out of tasking loop
 
@@ -3437,7 +3440,9 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
 
       //ME1
       kmp_info_t *thread = __kmp_threads[i];
-      __kmp_alloc_task_deque(thread, thread_data);
+      if (thread_data->td.td_deque == NULL) {
+        __kmp_alloc_task_deque(thread, thread_data);
+      }
       //ME2
 
       if (thread_data->td.td_deque_last_stolen >= nthreads) {
