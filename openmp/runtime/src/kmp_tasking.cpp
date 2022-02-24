@@ -434,7 +434,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   {
     thread_data->td.td_deque[thread_data->td.td_deque_tail] =
         taskdata; // Push taskdata
-    printf("Task pushed by thread %d to own queue\n", __kmp_tid_from_gtid(gtid));
+    printf("Task %d pushed by thread %d to own queue\n", taskdata->td_task_id, __kmp_tid_from_gtid(gtid));
 
     thread_data->td.td_deque_tail =
         (thread_data->td.td_deque_tail + 1) & TASK_DEQUE_MASK(thread_data->td);
@@ -529,6 +529,7 @@ void __kmp_push_current_task_to_thread(kmp_info_t *this_thr, kmp_team_t *team,
                 team->t.t_implicit_task_taskdata[tid].td_parent));
 }
 
+
 // __kmp_task_start: bookkeeping for a task starting execution
 //
 // GTID: global thread id of calling thread
@@ -544,11 +545,20 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
             gtid, taskdata, current_task));
 
   KMP_DEBUG_ASSERT(taskdata->td_flags.tasktype == TASK_EXPLICIT);
-
   // mark currently executing task as suspended
   // TODO: GEH - make sure root team implicit task is initialized properly.
   // KMP_DEBUG_ASSERT( current_task -> td_flags.executing == 1 );
   current_task->td_flags.executing = 0;
+
+  //ME1
+  // store away the execution time of current task before starting on the new one
+  kmp_real64 current_time = 0;
+  __kmp_read_system_time(&current_time);
+  // Add extra execution time
+  current_task->td_previous_exectime +=  (current_time - current_task->td_starttime);
+  printf("Started working on task %d on thread %d\n", taskdata->td_task_id, gtid);
+  taskdata->td_starttime = current_time;
+  //ME2
 
 // Add task to stack if tied
 #ifdef BUILD_TIED_TASK_STACK
@@ -868,6 +878,13 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   kmp_info_t *thread = __kmp_threads[gtid];
   kmp_task_team_t *task_team =
       thread->th.th_task_team; // might be NULL for serial teams...
+
+  //ME1
+  kmp_real64 current_time = 0;
+  __kmp_read_system_time(&current_time);
+    current_time = (current_time - taskdata->td_starttime + taskdata->td_previous_exectime) * 1000000;
+  printf("Finished task %d on thread %d in %f milliseconds\n", taskdata->td_task_id, gtid ,current_time);
+  //ME2
 #if KMP_DEBUG
   kmp_int32 children = 0;
 #endif
@@ -902,6 +919,11 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       }
       thread->th.th_current_task = resumed_task; // restore current_task
       resumed_task->td_flags.executing = 1; // resume previous task
+      //ME1
+      // Previous task start time
+      printf("Reached unlikely\n");
+      resumed_task->td_starttime = current_time;
+      //ME2
       KA_TRACE(10, ("__kmp_task_finish(exit): T#%d partially done task %p, "
                     "resuming task %p\n",
                     gtid, taskdata, resumed_task));
@@ -1018,6 +1040,10 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
   // TODO: GEH - make sure root team implicit task is initialized properly.
   // KMP_DEBUG_ASSERT( resumed_task->td_flags.executing == 0 );
+
+  //ME1
+  __kmp_read_system_time(&resumed_task->td_starttime);
+  //ME2
   resumed_task->td_flags.executing = 1; // resume previous task
 
   KA_TRACE(
@@ -1136,7 +1162,6 @@ void __kmp_init_implicit_task(ident_t *loc_ref, kmp_info_t *this_thr,
   task->td_flags.executing = 1;
   task->td_flags.complete = 0;
   task->td_flags.freed = 0;
-
   task->td_depnode = NULL;
   task->td_last_tied = task;
   task->td_allow_completion_event.type = KMP_EVENT_UNINITIALIZED;
@@ -1212,6 +1237,13 @@ static size_t __kmp_round_up_to_val(size_t size, size_t val) {
   }
   return size;
 } // __kmp_round_up_to_va
+
+
+//ME1
+// Debug global task counter
+int global_taskcounter = 0;
+//ME2
+
 
 // __kmp_task_alloc: Allocate the taskdata and task data structures for a task
 //
@@ -1370,6 +1402,15 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
   // avoid copying icvs for proxy tasks
   if (flags->proxy == TASK_FULL)
     copy_icvs(&taskdata->td_icvs, &taskdata->td_parent->td_icvs);
+
+  //ME1
+  // debug variable for task ID
+  global_taskcounter += 1;
+  taskdata->td_task_id = global_taskcounter;
+  // Initialisations
+  taskdata->td_starttime = 0;
+  taskdata->td_previous_exectime = 0;
+  //ME2
 
   taskdata->td_flags = *flags;
   taskdata->td_task_team = thread->th.th_task_team;
@@ -3947,14 +3988,14 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   current = thread_dup->th.th_current_task;
 
   if (!__kmp_task_is_allowed(sched_gtid, 1, taskdata, current)){
-      printf("Task not allowed for thread %d\n", sched_tid);
+      printf("Task %d not allowed for thread %d\n", taskdata->td_task_id, sched_tid);
       return false;
   }
 
   bool result = __kmp_give_task(thread, sched_tid, task, 1);
 
   if (result) {
-    printf("Task scheduled by thread %d on thread %d \n", tid, sched_tid);
+    printf("Task %d scheduled by thread %d on thread %d \n", taskdata->td_task_id, tid, sched_tid);
   }
 
   return result;
