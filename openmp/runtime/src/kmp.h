@@ -2500,7 +2500,7 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   size_t td_size_alloc; // Size of task structure, including shareds etc.
 
   //ME1
-  kmp_real64 td_starttime; // Stores the current segments starting time of task
+  kmp_real64 td_starttime; // Stores the current task segment start time.
   kmp_real64 td_previous_exectime; // Stores previous execution time of task if it has been interrupted.
   //ME2
 

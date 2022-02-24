@@ -884,10 +884,11 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       thread->th.th_task_team; // might be NULL for serial teams...
 
   //ME1
+  // Calculates the task's execution time
   kmp_real64 current_time = 0;
   __kmp_read_system_time(&current_time);
     current_time = (current_time - taskdata->td_starttime + taskdata->td_previous_exectime) * 1000000;
-  printf("Finished task %d on thread %d in %f milliseconds\n", taskdata->td_task_id, gtid ,current_time);
+  printf("Finished task %d on thread %d in %f microseconds\n", taskdata->td_task_id, gtid ,current_time);
   //ME2
 #if KMP_DEBUG
   kmp_int32 children = 0;
