@@ -434,7 +434,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   {
     thread_data->td.td_deque[thread_data->td.td_deque_tail] =
         taskdata; // Push taskdata
-    printf("Task pushed by thread %d to own queue\n", gtid);
+    printf("Task pushed by thread %d to own queue\n", __kmp_tid_from_gtid(gtid));
 
     thread_data->td.td_deque_tail =
         (thread_data->td.td_deque_tail + 1) & TASK_DEQUE_MASK(thread_data->td);
@@ -2779,6 +2779,7 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   kmp_int32 target;
   kmp_int32 victim_tid;
 
+
   KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
 
   threads_data = task_team->tt.tt_threads_data;
@@ -3438,8 +3439,13 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
       kmp_thread_data_t *thread_data = &(*threads_data_p)[i];
       thread_data->td.td_thr = team->t.t_threads[i];
 
+
       //ME1
+      kmp_team_t *team = __kmp_get_team();
       kmp_info_t *thread = __kmp_threads[i];
+
+      int gtid_test = __kmp_gtid_from_tid(i, team);
+      printf("gtid = %d, i=%d\n", gtid_test,i);
       if (thread_data->td.td_deque == NULL) {
         __kmp_alloc_task_deque(thread, thread_data);
       }
@@ -3920,7 +3926,7 @@ release_and_exit:
 // ME1
 // function to perform the scheduling algorithm and
 // give the task to the best thread
-// returns true/false depening on if the task was succesfully scheduled
+// returns true/false depening on if the task was successfully scheduled
 static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
                                 kmp_int32 tid) {
   // schedule to random thread to begin with
@@ -3930,8 +3936,22 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
     ++sched_tid; // Adjusts random distribution to exclude self
   }
 
-  
-  bool result = __kmp_give_task(thread, sched_tid, task, 1);
+  kmp_taskdata_t *taskdata, *current;
+
+  kmp_team_t *team = __kmp_get_team();
+  taskdata = KMP_TASK_TO_TASKDATA(task);
+
+  int sched_gtid = __kmp_gtid_from_tid(sched_tid, team);
+  kmp_info_t *thread_dup =  __kmp_thread_from_gtid(sched_gtid);
+
+  current = thread_dup->th.th_current_task;
+
+  if (!__kmp_task_is_allowed(sched_gtid, 1, taskdata, current)){
+      printf("Task not allowed for thread %d\n", sched_tid);
+      return false;
+  }
+
+  bool result = __kmp_give_task(thread_dup, sched_tid, task, 1);
 
   if (result) {
     printf("Task scheduled by thread %d on thread %d \n", tid, sched_tid);
