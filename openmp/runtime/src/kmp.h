@@ -2498,6 +2498,12 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
       *td_depnode; // Pointer to graph node if this task has dependencies
   kmp_task_team_t *td_task_team;
   size_t td_size_alloc; // Size of task structure, including shareds etc.
+
+  //ME1
+  kmp_real64 td_starttime; // Stores the current segments starting time of task
+  kmp_real64 td_previous_exectime; // Stores previous execution time of task if it has been interrupted.
+  //ME2
+
 #if defined(KMP_GOMP_COMPAT)
   // 4 or 8 byte integers for the loop bounds in GOMP_taskloop
   kmp_int32 td_size_loop_bounds;
