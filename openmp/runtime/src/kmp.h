@@ -16,6 +16,13 @@
 
 #include "kmp_config.h"
 
+//ME1
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
+
+//ME2
+
 /* #define BUILD_PARALLEL_ORDERED 1 */
 
 /* This fix replaces gettimeofday with clock_gettime for better scalability on
@@ -39,6 +46,11 @@
 // Mask for determining index into stack block
 #define TASK_STACK_INDEX_MASK (TASK_STACK_BLOCK_SIZE - 1)
 #endif // BUILD_TIED_TASK_STACK
+
+//ME1
+#define MAX_STEAL_ATTEMPTS 5
+#define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
+//ME2
 
 #define TASK_NOT_PUSHED 1
 #define TASK_SUCCESSFULLY_PUSHED 0
@@ -2729,6 +2741,12 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint32 th_task_state_stack_sz; // Size of th_task_state_memo_stack
   kmp_uint32 th_reap_state; // Non-zero indicates thread is not
   // tasking, thus safe to reap
+
+  //ME1
+  kmp_uint16 th_sleep_shift = 0;
+  kmp_uint16 th_steal_attempts = 0;
+  std::condition_variable th_cv;
+  //ME2
 
   /* More stuff for keeping track of active/sleeping threads (this part is
      written by the worker thread) */

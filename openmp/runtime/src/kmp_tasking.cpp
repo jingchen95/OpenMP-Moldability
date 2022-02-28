@@ -17,6 +17,10 @@
 #include "kmp_wait_release.h"
 #include "kmp_taskdeps.h"
 
+//ME1
+using namespace std::chrono_literals;
+//ME2
+
 #if OMPT_SUPPORT
 #include "ompt-specific.h"
 #endif
@@ -434,11 +438,9 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   {
     thread_data->td.td_deque[thread_data->td.td_deque_tail] =
         taskdata; // Push taskdata
-<<<<<<< HEAD
-    printf("Task pushed by thread %d to own queue\n", __kmp_tid_from_gtid(gtid));
-=======
+
     printf("Task %d pushed by thread %d to own queue\n", taskdata->td_task_id, __kmp_tid_from_gtid(gtid));
->>>>>>> 9d2f4ab14afa62444c832e36d029fd647f6f45c5
+
 
     thread_data->td.td_deque_tail =
         (thread_data->td.td_deque_tail + 1) & TASK_DEQUE_MASK(thread_data->td);
@@ -2965,6 +2967,12 @@ static inline int __kmp_execute_tasks_template(
   kmp_int32 nthreads, victim_tid = -2, use_own_tasks = 1, new_victim = 0,
                       tid = thread->th.th_info.ds.ds_tid;
 
+  //ME1
+  std::condition_variable cv;
+  std::mutex cv_m;
+  //ME2
+
+
   KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
   KMP_DEBUG_ASSERT(thread == __kmp_threads[gtid]);
 
@@ -3062,8 +3070,33 @@ static inline int __kmp_execute_tasks_template(
         }
       }
       //ME1
-      if (task == NULL)
-        task = __kmp_remove_my_task(thread, gtid, task_team, is_constrained);
+      //No task was stolen
+      if (task == NULL) {
+          ++thread->th.th_steal_attempts;
+          if (thread->th.th_steal_attempts == MAX_STEAL_ATTEMPTS) {
+              //sleep
+              std::unique_lock <std::mutex> lk(cv_m);
+              //printf("Thread %d going to sleep for %d ms\n", __kmp_tid_from_gtid(gtid),
+              //       (1 << thread->th.th_sleep_shift));
+              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 1ms) == std::cv_status::timeout) {
+                  //Slept the entire specified duration
+                  ++thread->th.th_sleep_shift;
+                  if (thread->th.th_sleep_shift > MAX_SLEEP_SHIFT) {
+                      thread->th.th_sleep_shift = MAX_SLEEP_SHIFT;
+                  }
+              } else {
+                  //Woken up by another thread
+                  printf("Thread %d woken up\n", __kmp_tid_from_gtid(gtid));
+                  thread->th.th_sleep_shift = 0;
+                  task = __kmp_remove_my_task(thread, gtid, task_team, is_constrained);
+              }
+
+              thread->th.th_steal_attempts = 0;
+          }
+      }else{
+          thread->th.th_steal_attempts = 0;
+          thread->th.th_sleep_shift = 0;
+      }
       //ME2
       if (task == NULL)
         break; // break out of tasking loop
@@ -3078,6 +3111,10 @@ static inline int __kmp_execute_tasks_template(
         __kmp_itt_task_starting(itt_sync_obj);
       }
 #endif /* USE_ITT_BUILD && USE_ITT_NOTIFY */
+    //ME1
+    //Successful steal, reset both steal attempts and sleep time
+
+    //ME2
       __kmp_invoke_task(gtid, task, current_task);
 #if USE_ITT_BUILD
       if (itt_sync_obj != NULL)
@@ -3977,9 +4014,9 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
                                 kmp_int32 tid) {
   // schedule to random thread to begin with
   kmp_int32 nthreads = thread->th.th_task_team->tt.tt_nproc;
-  kmp_int32 sched_tid = __kmp_get_random(thread) % (nthreads - 1);
-  if (sched_tid >= tid) {
-    ++sched_tid; // Adjusts random distribution to exclude self
+  kmp_int32 tid_sched = __kmp_get_random(thread) % (nthreads - 1);
+  if (tid_sched >= tid) {
+    ++tid_sched; // Adjusts random distribution to exclude self
   }
 
   kmp_taskdata_t *taskdata, *current;
@@ -3987,20 +4024,22 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   kmp_team_t *team = __kmp_get_team();
   taskdata = KMP_TASK_TO_TASKDATA(task);
 
-  int sched_gtid = __kmp_gtid_from_tid(sched_tid, team);
-  kmp_info_t *thread_dup =  __kmp_thread_from_gtid(sched_gtid);
+  int sched_gtid = __kmp_gtid_from_tid(tid_sched, team);
+  kmp_info_t *thread_sched =  __kmp_thread_from_gtid(sched_gtid);
 
-  current = thread_dup->th.th_current_task;
+  current = thread_sched->th.th_current_task;
 
   if (!__kmp_task_is_allowed(sched_gtid, 1, taskdata, current)){
-      printf("Task not allowed for thread %d\n", sched_tid);
+      printf("Task not allowed for thread %d\n", tid_sched);
       return false;
   }
 
-  bool result = __kmp_give_task(thread_dup, sched_tid, task, 1);
+  bool result = __kmp_give_task(thread_sched, tid_sched, task, 1);
 
   if (result) {
-    printf("Task %d scheduled by thread %d on thread %d \n", taskdata->td_task_id, tid, sched_tid);
+    printf("Task %d scheduled by thread %d on thread %d \n", taskdata->td_task_id, tid, tid_sched);
+    thread_sched->th.th_cv.notify_all();
+
   }
 
   return result;
