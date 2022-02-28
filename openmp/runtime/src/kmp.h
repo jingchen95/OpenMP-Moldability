@@ -20,7 +20,13 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
-
+// check for double
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <linux/unistd.h>
+#include <linux/perf_event.h>
+#include <sched.h>
 //ME2
 
 /* #define BUILD_PARALLEL_ORDERED 1 */
@@ -2514,6 +2520,13 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   //ME1
   kmp_real64 td_starttime; // Stores the current task segment start time.
   kmp_real64 td_previous_exectime; // Stores previous execution time of task if it has been interrupted.
+  //PERF related variables
+  kmp_uint64 td_cycles_start;
+  kmp_uint64 td_cycles_prev;
+  kmp_uint64 td_instructions_start;
+  kmp_uint64 td_instructions_prev;
+  kmp_uint64 td_cachemiss_start;
+  kmp_uint64 td_cachemiss_prev;
   //ME2
 
 #if defined(KMP_GOMP_COMPAT)
@@ -2743,6 +2756,13 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   // tasking, thus safe to reap
 
   //ME1
+  //PERF
+  kmp_uint8 th_perf_init_flag = 0;
+  kmp_int32 th_counter_cycles;
+  kmp_int32 th_counter_instructions;
+  kmp_int32 th_counter_cachemiss;
+  perf_event_attr perf_attr[3];
+
   kmp_uint16 th_sleep_shift = 0;
   kmp_uint16 th_steal_attempts = 0;
   std::condition_variable th_cv;

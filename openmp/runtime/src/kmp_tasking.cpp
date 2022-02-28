@@ -562,8 +562,27 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   __kmp_read_system_time(&current_time);
   // Add extra execution time
   current_task->td_previous_exectime +=  (current_time - current_task->td_starttime);
+  // Debug message
   printf("Started working on task %d on thread %d\n", taskdata->td_task_id, gtid);
   taskdata->td_starttime = current_time;
+
+  // PERF
+  // Get value
+  kmp_uint64 current_cycles = 0;
+  kmp_uint64 current_instructions = 0;
+  kmp_uint64 current_cachemiss = 0;
+  // Read from counters
+  read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
+  read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
+  read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+  // Add on previous counters
+  current_task->td_cycles_prev += (current_cycles - current_task->td_cycles_start);
+  current_task->td_instructions_prev += (current_instructions - current_task->td_instructions_start);
+  current_task->td_cachemiss_prev += (current_cachemiss - current_task->td_cachemiss_start);
+  // Update starting counters
+  taskdata->td_cycles_start = current_cycles;
+  taskdata->td_instructions_start = current_instructions;
+  taskdata->td_cachemiss_start = current_cachemiss;
   //ME2
 
 // Add task to stack if tied
@@ -889,8 +908,22 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   // Calculates the task's execution time
   kmp_real64 current_time = 0;
   __kmp_read_system_time(&current_time);
-    current_time = (current_time - taskdata->td_starttime + taskdata->td_previous_exectime) * 1000000;
-  printf("Finished task %d on thread %d in %f microseconds\n", taskdata->td_task_id, gtid ,current_time);
+  current_time = (current_time - taskdata->td_starttime + taskdata->td_previous_exectime) * 1000000;
+  //PERF
+  kmp_uint64 current_cycles = 0;
+  kmp_uint64 current_instructions = 0;
+  kmp_uint64 current_cachemiss = 0;
+  // Read from counters
+  read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
+  read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
+  read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+  // Get final counter values
+  kmp_uint64 cycles_finish = current_cycles - taskdata->td_cycles_start + taskdata->td_cycles_prev;
+  kmp_uint64 instructions_finish = current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
+  kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
+  // Debug print
+  printf("Finished task %d on thread %d in %f microseconds\n Used %llu CPU cycles, %llu instructions and %llu cachemisses\n"
+         , taskdata->td_task_id, gtid ,current_time, cycles_finish, instructions_finish, cachemiss_finish);
   //ME2
 #if KMP_DEBUG
   kmp_int32 children = 0;
@@ -927,6 +960,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       thread->th.th_current_task = resumed_task; // restore current_task
       resumed_task->td_flags.executing = 1; // resume previous task
       //ME1
+      // Remove this? ...unlikely
       // Previous task start time
       printf("Reached unlikely\n");
       resumed_task->td_starttime = current_time;
@@ -1050,6 +1084,10 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
   //ME1
   __kmp_read_system_time(&resumed_task->td_starttime);
+  //PERF
+  resumed_task->td_cycles_start = current_cycles;
+  resumed_task->td_instructions_start = current_instructions;
+  resumed_task->td_cachemiss_start = current_cachemiss;
   //ME2
   resumed_task->td_flags.executing = 1; // resume previous task
 
@@ -2944,6 +2982,15 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   return task;
 }
 
+//ME1
+//perf counter syscall
+uint64_t perf_event_open(struct perf_event_attr * hw,
+                         pid_t pid, kmp_int32 cpu, kmp_int32 grp, kmp_uint64 flags)
+{
+    return syscall(__NR_perf_event_open, hw, pid, cpu, grp, flags);
+}
+//ME2
+
 // __kmp_execute_tasks_template: Choose and execute tasks until either the
 // condition is statisfied (return true) or there are none left (return false).
 //
@@ -2993,6 +3040,34 @@ static inline int __kmp_execute_tasks_template(
   KMP_DEBUG_ASSERT(nthreads > 1 || task_team->tt.tt_found_proxy_tasks ||
                    task_team->tt.tt_hidden_helper_task_encountered);
   KMP_DEBUG_ASSERT(*unfinished_threads >= 0);
+
+  //ME1
+  if (thread->th.th_perf_init_flag == 0) {
+      //kmp_int32 pid = getpid();
+      kmp_int32 cpu = sched_getcpu();
+      printf("TID = %d, GTID = %d, CPU = %u \n", tid, gtid, cpu);
+
+      thread->th.perf_attr[0].type = PERF_TYPE_HARDWARE;
+      thread->th.perf_attr[0].config = PERF_COUNT_HW_REF_CPU_CYCLES;
+      thread->th.perf_attr[0].disabled = 0;
+      thread->th.th_counter_cycles = perf_event_open(&thread->th.perf_attr[0], 0, cpu, -1, 0);
+      if (thread->th.th_counter_cycles < 0) printf("Failed to open counter for cycles\n");
+
+      thread->th.perf_attr[1].type = PERF_TYPE_HARDWARE;
+      thread->th.perf_attr[1].config = PERF_COUNT_HW_INSTRUCTIONS;
+      thread->th.perf_attr[1].disabled = 0;
+      thread->th.th_counter_instructions = perf_event_open(&thread->th.perf_attr[1], 0, cpu, -1, 0);
+      if (thread->th.th_counter_instructions < 0) printf("Failed to open counter for instructions\n");
+
+      thread->th.perf_attr[2].type = PERF_TYPE_HARDWARE;
+      thread->th.perf_attr[2].config = PERF_COUNT_HW_CACHE_MISSES;
+      thread->th.perf_attr[2].disabled = 0;
+      thread->th.th_counter_cachemiss = perf_event_open(&thread->th.perf_attr[2], 0, cpu, -1, 0);
+      if (thread->th.th_counter_cachemiss < 0) printf("Failed to open counter for cache misses\n");
+
+      thread->th.th_perf_init_flag = 1;
+  }
+  //ME2
 
   while (1) { // Outer loop keeps trying to find tasks in case of single thread
     // getting tasks from target constructs
