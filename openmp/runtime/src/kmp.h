@@ -20,6 +20,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#include <unordered_map>
 // check for double
 #include <stdio.h>
 #include <unistd.h>
@@ -246,6 +247,7 @@ enum {
   KMP_IDENT_OPENMP_SPEC_VERSION_MASK = 0xFF000000
 };
 
+
 /*!
  * The ident structure that describes a source location.
  */
@@ -326,6 +328,15 @@ extern "C" {
 
 /* ------------------------------------------------------------------------ */
 /* Enumeration types */
+
+//ME1
+typedef enum task_definition{
+    memory_bound,
+    cache_intensive,
+    compute_bound
+}task_definition_t;
+
+//ME2
 
 enum kmp_state_timer {
   ts_stop,

@@ -21,6 +21,13 @@
 using namespace std::chrono_literals;
 //ME2
 
+//ME1
+
+std::unordered_map<kmp_routine_entry_t, task_definition_t> task_map;
+std::mutex task_map_m;
+//ME2
+
+
 #if OMPT_SUPPORT
 #include "ompt-specific.h"
 #endif
@@ -251,6 +258,33 @@ static void __kmp_pop_task_stack(kmp_int32 gtid, kmp_info_t *thread,
   return;
 }
 #endif /* BUILD_TIED_TASK_STACK */
+//ME1
+//Gets the definition of a task from its routine entry
+static task_definition_t __kmp_get_def(kmp_routine_entry_t routine){
+    // lock map
+    std::lock_guard<std::mutex> lock(task_map_m);
+    task_definition_t res = task_map[routine];
+    return res;
+}
+
+//Checks if a routine is present in the map
+static bool __kmp_contains_def(kmp_routine_entry_t routine){
+    std::lock_guard<std::mutex> lock(task_map_m);
+    auto search = task_map.find( routine);
+    if (search != task_map.end()) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+//Adds a <routine,definition> pair to the map, may overwrite a previous value.
+static void __kmp_add_def(kmp_routine_entry_t routine, task_definition_t definition){
+    std::lock_guard<std::mutex> lock(task_map_m);
+    task_map[routine] = definition;
+}
+
+//ME2
 
 // returns 1 if new task is allowed to execute, 0 otherwise
 // checks Task Scheduling constraint (if requested) and
@@ -566,6 +600,16 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   printf("Started working on task %d on thread %d\n", taskdata->td_task_id, gtid);
   taskdata->td_starttime = current_time;
 
+  //Classification just testing so far
+
+  /*
+  if(__kmp_contains_def(task->routine)){
+      printf("Routine %d already in map with value %d\n", task->routine, __kmp_get_def(task->routine));
+  }else{
+      __kmp_add_def(task->routine, compute_bound);
+      printf("adding routine %d\n", task->routine);
+  }
+  */
   // PERF
   // Get value
   kmp_uint64 current_cycles = 0;
