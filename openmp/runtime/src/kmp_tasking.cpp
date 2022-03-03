@@ -19,12 +19,13 @@
 
 //ME1
 using namespace std::chrono_literals;
-//ME2
-
-//ME1
 
 std::unordered_map<kmp_routine_entry_t, task_definition_t> task_map;
 std::mutex task_map_m;
+
+std::mutex performance_model_m; // lock for the kmp_performance struct
+kmp_scheduler *kmp_sched;
+kmp_performance *kmp_perf;
 //ME2
 
 
@@ -4124,6 +4125,107 @@ release_and_exit:
 
   return result;
 }
+
+//ME1
+void __kmp_performance_model_init(){
+    for(int i = 0; i < CLUSTER_SIZE; i++){
+        for (int j = 0; j < CLUSTER_A_SIZE; j++){
+            kmp_perf->frequencies[i][j] = 0;
+            kmp_perf->execution_times[i][j] = 0;
+        }
+    }
+}
+
+void __kmp_performance_model_reset(kmp_uint8 cluster){
+    for (int i = 0; i < CLUSTER_A_SIZE; i++){
+        kmp_perf->execution_times[cluster][i] = 0;
+    }
+}
+
+// requires a lock to enter
+void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time, kmp_uint32 freq){
+    //TODO Check if frequency differs with some error margin with current, if so reset the performance model...
+    // if (freq != kmp_perf->frequencies[cluster]) ...
+
+    // Else add the value
+    kmp_perf->execution_times[cluster][tasktype] = execution_time; //TODO Change this to a weighted value
+}
+
+// Returns the execution time
+kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 tasktype){
+    return kmp_perf->execution_times[cluster][tasktype];
+}
+
+// Update activity status, status 1 = active, status 0 = sleeping
+void __kmp_thread_active_status(kmp_uint8 cluster, kmp_int32 tid, kmp_uint8 status){
+    kmp_int32 adj_tid = tid < CLUSTER_A_SIZE ? tid : tid % CLUSTER_A_SIZE;
+    kmp_sched->thread_active[cluster][adj_tid] = status;
+}
+
+// Initialize the kmp_scheduler struct
+void __kmp_scheduler_init(kmp_info_t *thread){
+    for (int i = 0; i < CLUSTER_SIZE; i++){
+        //TODO change power from static value,
+        kmp_sched->idle_power[i] = i == 0 ? CLUSTER_A_POWER_IDLE : CLUSTER_B_POWER_IDLE;
+        kmp_sched->runtime_power[i] = i == 0 ? CLUSTER_A_POWER_RUNTIME : CLUSTER_B_POWER_RUNTIME;
+        for (int j = 0; j < CLUSTER_A_SIZE; j++){
+            //TODO cluster_threads[i][j] = get thread pointers...
+            kmp_sched->thread_active[i][j] = 0;
+        }
+    }
+}
+
+
+void __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid) {
+    //kmp_int32 nthreads = thread->th.th_task_team->tt.tt_nproc;
+    //kmp_uint8 r_cluster = (__kmp_get_random(thread) % CLUSTER_SIZE) - 1;
+    kmp_uint8 optimal_cluster = 0;
+    kmp_uint32 minimum_energy = MAX_INTEGER_VAL;
+    // For each execution place (cluster...) should be randomly selected
+    for (kmp_int32 curr_cluster = 0; curr_cluster < kmp_sched->num_clusters; curr_cluster++){
+
+        // first check if all threads per curr_cluster are executing tasks or are sleeping
+        // Get idle power consumption, if cores of an entire cluster are sleeping
+
+        kmp_uint32 idle_power = kmp_sched->idle_power[curr_cluster];
+        for (kmp_int32 cluster = 0; curr_cluster < kmp_sched->num_clusters;){
+            if (curr_cluster == cluster) continue;
+
+            // the idle power consumption is shared between current cluster and the idle clusters.
+            kmp_uint8 cluster_awake = 0;
+            for (kmp_int32 curr_thread = 0; curr_thread < CLUSTER_A_SIZE; curr_thread++){
+                if (kmp_sched->thread_active[cluster][curr_thread] == THREAD_AWAKE){
+                    cluster_awake = 1;
+                    break;
+                }
+            }
+            // if one thread on other cluster is awake, ignore its idle power
+            idle_power += cluster_awake ? 0 : kmp_sched->idle_power[cluster];
+        }
+        // Get the running power consumption from the power profiler, depending on frequency etc
+        //TODO change runtime power functionality
+        kmp_uint32 total_power = idle_power + kmp_sched->runtime_power[curr_cluster];
+
+        // Get the execution time from the performance model
+        //TODO need to check for tasktype of current task if possible or mark as unknown....
+        // then fetch execution time
+        kmp_uint8 temporary_tasktype_for_compiler_remove_after = 0;
+        kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster, temporary_tasktype_for_compiler_remove_after);
+        // Calculate the energy based on the execution time and idle + runtime power consumption
+        // Depending on how we store the execution time we may need to change the scale of exec time here
+        kmp_uint32 energy = exec_time * total_power;
+
+        // If the energy is less then the current minimum, set this as the current minimum
+        if (energy < minimum_energy){
+            optimal_cluster = curr_cluster;
+            minimum_energy = energy;
+        }
+    }
+    //TODO we now have the optimal cluster
+    // schedule task on optimal thread, depending on queuesize or sleeping? or even both...
+
+}
+//ME2
 
 // ME1
 // function to perform the scheduling algorithm and

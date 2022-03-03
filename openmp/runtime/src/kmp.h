@@ -57,6 +57,27 @@
 //ME1
 #define MAX_STEAL_ATTEMPTS 5
 #define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
+
+// Hardcoded variables, Assumes CLUSTER_A_SIZE is bigger than CLUSTER_B_SIZE
+#define CLUSTER_SIZE 1 // Number of clusters
+#define CLUSTER_A_SIZE 8 // threads on cluster A
+#define CLUSTER_B_SIZE 0 // threads on cluster B
+
+#define TASK_TYPES 3
+#define TASK_CPU 0
+#define TASK_CACHE 1
+#define TASK_MEMORY 2
+
+#define CLUSTER_A_POWER_IDLE 10
+#define CLUSTER_A_POWER_RUNTIME 100
+#define CLUSTER_B_POWER_IDLE 20
+#define CLUSTER_B_POWER_RUNTIME 200
+
+#define THREAD_AWAKE 1
+#define THREAD_SLEEP 0
+
+#define MAX_INTEGER_VAL 4294967295
+
 //ME2
 
 #define TASK_NOT_PUSHED 1
@@ -3027,6 +3048,22 @@ typedef union KMP_ALIGN_CACHE kmp_root {
 struct fortran_inx_info {
   kmp_int32 data;
 };
+
+//ME1
+struct kmp_performance {
+    kmp_uint32 frequencies[CLUSTER_SIZE][CLUSTER_A_SIZE]; // Frequency for each core for current execution times
+    kmp_uint32 execution_times[CLUSTER_SIZE][TASK_TYPES];
+};
+
+struct kmp_scheduler {
+    kmp_uint8 num_clusters = CLUSTER_SIZE;
+    kmp_info_t cluster_threads[CLUSTER_SIZE][CLUSTER_A_SIZE]; // Should be max of clusters size
+    kmp_uint32 idle_power[CLUSTER_SIZE]; // Need to make 2 dimensional for different frequencies, or linear value?
+    kmp_uint32 runtime_power[CLUSTER_SIZE]; // Need to make 2 dimensional for different frequencies or linear value?
+    kmp_uint8 thread_active[CLUSTER_SIZE][CLUSTER_A_SIZE]; // Flag or char for each thread
+};
+
+//ME2
 
 /* ------------------------------------------------------------------------ */
 
