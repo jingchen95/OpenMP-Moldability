@@ -4318,10 +4318,12 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
     }
     // We now have the optimal cluster
     // schedule task on optimal thread right now picks the first sleeping thread it finds
+    // If unable to find a sleeping thread, schedule task on yourself TODO you may not be in the optimal cluster...
     // TODO change this to get actual tid instead of "i" assumes tid are in the range from 0-n threads
+    // TODO May want to switch this to random lookup?, although we only wanna do one pass over all threads
     kmp_int32 optimal_thread = tid;
     for (int i = 0; i < CLUSTER_A_SIZE; i++){
-        if (kmp_sched_p->thread_active[CLUSTER_A][i] == THREAD_SLEEP){
+        if (kmp_sched_p->thread_active[optimal_cluster][i] == THREAD_SLEEP){
             optimal_thread = i;
             break;
         }
