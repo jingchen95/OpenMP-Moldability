@@ -4197,9 +4197,8 @@ static void __kmp_performance_model_init(){
 }
 // Resets the performance model struct for given cluster
 // To be used when the frequency for the cluster is changed
-// Should only be called from __kmp_performance_model_add
-// Assumes to have the lock before calling this function
 static void __kmp_performance_model_reset(kmp_uint8 cluster){
+    std::lock_guard<std::mutex> lock(performance_model_m);
     for (int i = 0; i < CLUSTER_A_SIZE; i++){
         kmp_perf_p->execution_times[cluster][i] = 0;
     }
@@ -4269,7 +4268,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
     //kmp_uint8 r_cluster = (__kmp_get_random(thread) % CLUSTER_AMOUNT) - 1;
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
     kmp_uint8 optimal_cluster = 0;
-    kmp_uint32 minimum_energy = MAX_INTEGER_VAL;
+    kmp_uint32 minimum_energy = UINT_MAX;
 
     if (taskdata->td_task_type != TASK_UNDEFINED) {
         // TODO We also need to run each new tasktype on all clusters for exhaustive testing
@@ -4278,7 +4277,6 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
 
             // first check if all threads per curr_cluster are executing tasks or are sleeping
             // Get idle power consumption, if cores of an entire cluster are sleeping
-
             kmp_uint32 idle_power = kmp_sched_p->idle_power[curr_cluster];
             for (kmp_int32 cluster = 0; curr_cluster < kmp_sched_p->num_clusters;) {
                 if (curr_cluster == cluster) continue;
@@ -4365,9 +4363,7 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   // Task mapping algorithm, returns the tid of preferable thread to schedule
   kmp_int32 tid_sched = __kmp_task_mapping(thread, task, tid);
 
-  if (tid_sched >= tid) {
-    ++tid_sched; // Adjusts random distribution to exclude self
-  }
+  if (tid_sched == tid) return false;
 
   int sched_gtid = __kmp_gtid_from_tid(tid_sched, team);
   kmp_info_t *thread_sched =  __kmp_thread_from_gtid(sched_gtid);

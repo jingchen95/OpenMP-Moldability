@@ -94,8 +94,6 @@
 #define THREAD_AWAKE 1
 #define THREAD_SLEEP 0
 
-#define MAX_INTEGER_VAL 4294967295
-
 //ME2
 
 #define TASK_NOT_PUSHED 1
@@ -370,9 +368,9 @@ extern "C" {
 
 //ME1
 typedef enum task_definition{
-    memory_bound,
-    cache_intensive,
     compute_bound,
+    cache_intensive,
+    memory_bound,
     undefined
 }task_definition_t;
 
