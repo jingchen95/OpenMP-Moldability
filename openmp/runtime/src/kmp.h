@@ -59,7 +59,10 @@
 #define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
 
 // Hardcoded variables, Assumes CLUSTER_A_SIZE is bigger than CLUSTER_B_SIZE
-#define CLUSTER_SIZE 1 // Number of clusters
+#define CLUSTER_AMOUNT 1 // Number of clusters
+#define CLUSTER_B_ACTIVE 0
+#define CLUSTER_A 0
+#define CLUSTER_B 1
 #define CLUSTER_A_SIZE 8 // threads on cluster A
 #define CLUSTER_B_SIZE 0 // threads on cluster B
 
@@ -67,11 +70,26 @@
 #define TASK_CPU 0
 #define TASK_CACHE 1
 #define TASK_MEMORY 2
+#define TASK_UNDEFINED 3
 
+#define LOW_FREQ_POWER 0
+#define HIGH_FREQ_POWER 1
+#define CLUSTER_POWER_RUNTIME_SAMPLES 2
 #define CLUSTER_A_POWER_IDLE 10
-#define CLUSTER_A_POWER_RUNTIME 100
+#define CLUSTER_A_POWER_RUNTIME_CPU_LOW 100
+#define CLUSTER_A_POWER_RUNTIME_CPU_HIGH 1000
+#define CLUSTER_A_POWER_RUNTIME_CACHE_LOW 150
+#define CLUSTER_A_POWER_RUNTIME_CACHE_HIGH 1500
+#define CLUSTER_A_POWER_RUNTIME_MEMORY_LOW 200
+#define CLUSTER_A_POWER_RUNTIME_MEMORY_HIGH 2000
+
 #define CLUSTER_B_POWER_IDLE 20
-#define CLUSTER_B_POWER_RUNTIME 200
+#define CLUSTER_B_POWER_RUNTIME_CPU_LOW 75
+#define CLUSTER_B_POWER_RUNTIME_CPU_HIGH 750
+#define CLUSTER_B_POWER_RUNTIME_CACHE_LOW 113
+#define CLUSTER_B_POWER_RUNTIME_CACHE_HIGH 1130
+#define CLUSTER_B_POWER_RUNTIME_MEMORY_LOW 150
+#define CLUSTER_B_POWER_RUNTIME_MEMORY_HIGH 1500
 
 #define THREAD_AWAKE 1
 #define THREAD_SLEEP 0
@@ -354,7 +372,8 @@ extern "C" {
 typedef enum task_definition{
     memory_bound,
     cache_intensive,
-    compute_bound
+    compute_bound,
+    undefined
 }task_definition_t;
 
 //ME2
@@ -2550,6 +2569,7 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   size_t td_size_alloc; // Size of task structure, including shareds etc.
 
   //ME1
+  kmp_uint8 td_task_type;
   kmp_real64 td_starttime; // Stores the current task segment start time.
   kmp_real64 td_previous_exectime; // Stores previous execution time of task if it has been interrupted.
   //PERF related variables
@@ -2794,6 +2814,9 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_int32 th_counter_instructions;
   kmp_int32 th_counter_cachemiss;
   perf_event_attr perf_attr[3];
+
+  // TODO cluster currently hardcoded, fix for use with more then one cluster
+  kmp_uint8 th_cluster = CLUSTER_A;
 
   kmp_uint16 th_sleep_shift = 0;
   kmp_uint16 th_steal_attempts = 0;
@@ -3051,16 +3074,16 @@ struct fortran_inx_info {
 
 //ME1
 struct kmp_performance {
-    kmp_uint32 frequencies[CLUSTER_SIZE][CLUSTER_A_SIZE]; // Frequency for each core for current execution times
-    kmp_uint32 execution_times[CLUSTER_SIZE][TASK_TYPES];
+    kmp_uint32 frequencies[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Frequency for each core for current execution times
+    kmp_uint32 execution_times[CLUSTER_AMOUNT][TASK_TYPES];
 };
 
 struct kmp_scheduler {
-    kmp_uint8 num_clusters = CLUSTER_SIZE;
-    kmp_info_t cluster_threads[CLUSTER_SIZE][CLUSTER_A_SIZE]; // Should be max of clusters size
-    kmp_uint32 idle_power[CLUSTER_SIZE]; // Need to make 2 dimensional for different frequencies, or linear value?
-    kmp_uint32 runtime_power[CLUSTER_SIZE]; // Need to make 2 dimensional for different frequencies or linear value?
-    kmp_uint8 thread_active[CLUSTER_SIZE][CLUSTER_A_SIZE]; // Flag or char for each thread
+    kmp_uint8 num_clusters = CLUSTER_AMOUNT;
+    //kmp_info_t cluster_threads[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Should be max of clusters size
+    kmp_uint32 idle_power[CLUSTER_AMOUNT]; // Need to make 2 dimensional for different frequencies, or linear value?
+    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES]; // Need to make 2 dimensional for different frequencies or linear value?
+    kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Flag or char for each thread
 };
 
 //ME2
