@@ -4197,8 +4197,9 @@ static void __kmp_performance_model_init(){
 }
 // Resets the performance model struct for given cluster
 // To be used when the frequency for the cluster is changed
+// Should only be called from __kmp_performance_model_add
+// Assumes to have the lock before calling this function
 static void __kmp_performance_model_reset(kmp_uint8 cluster){
-    std::lock_guard<std::mutex> lock(performance_model_m);
     for (int i = 0; i < CLUSTER_A_SIZE; i++){
         kmp_perf_p->execution_times[cluster][i] = 0;
     }
