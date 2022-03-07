@@ -968,8 +968,8 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
   // Time in microseconds
   current_time = (current_time - taskdata->td_starttime + taskdata->td_previous_exectime) * 1000000;
-  //kmp_uint32 finish_time = static_cast<kmp_uint32>(current_time);
-  kmp_uint32 finish_time = 32;
+  kmp_uint32 finish_time = static_cast<kmp_uint32>(current_time);
+
   //PERF
   kmp_uint64 current_cycles = 0;
   kmp_uint64 current_instructions = 0;
@@ -1010,6 +1010,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
             }
             __kmp_add_def(task->routine, task_type);
         }
+        // Update the performance model
         __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
                                     finish_time, frequency);
 
@@ -4378,6 +4379,10 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   bool result = __kmp_give_task(thread_sched, tid_sched, task, 1);
 
   if (result) {
+    // Putting target thread as awake, otherwise if there are more tasks incoming
+    // They will be given to the thread before waking up
+    // TODO Gives segmentation fault... why?
+    //__kmp_thread_active_status(thread_sched->th.th_cluster, tid_sched, THREAD_AWAKE);
     printf("Task %d scheduled by thread %d on thread %d \n", taskdata->td_task_id, tid, tid_sched);
     thread_sched->th.th_cv.notify_all();
 

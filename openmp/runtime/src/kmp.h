@@ -3080,10 +3080,11 @@ struct kmp_performance {
 
 struct kmp_scheduler {
     kmp_uint8 num_clusters = CLUSTER_AMOUNT;
+    // TODO Currently broken with struct declaration, yet not implemented in the code anyway
     //kmp_info_t cluster_threads[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Should be max of clusters size
-    kmp_uint32 idle_power[CLUSTER_AMOUNT]; // Need to make 2 dimensional for different frequencies, or linear value?
-    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES]; // Need to make 2 dimensional for different frequencies or linear value?
-    kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Flag or char for each thread
+    kmp_uint32 idle_power[CLUSTER_AMOUNT];
+    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES];
+    kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_A_SIZE];
 };
 
 //ME2
