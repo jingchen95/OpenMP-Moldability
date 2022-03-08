@@ -63,7 +63,7 @@
 #define CLUSTER_B_ACTIVE 0
 #define CLUSTER_A 0
 #define CLUSTER_B 1
-#define CLUSTER_A_SIZE 8 // threads on cluster A
+#define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 0 // threads on cluster B
 
 #define TASK_TYPES 3

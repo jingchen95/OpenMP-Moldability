@@ -4198,7 +4198,6 @@ static void __kmp_performance_model_init(){
 // Resets the performance model struct for given cluster
 // To be used when the frequency for the cluster is changed
 static void __kmp_performance_model_reset(kmp_uint8 cluster){
-    std::lock_guard<std::mutex> lock(performance_model_m);
     for (int i = 0; i < CLUSTER_A_SIZE; i++){
         kmp_perf_p->execution_times[cluster][i] = 0;
     }
@@ -4257,10 +4256,10 @@ static void __kmp_scheduler_init(kmp_info_t *thread){
         for (int j = 0; j < CLUSTER_A_SIZE; j++){
             //TODO cluster_threads[i][j] = get thread pointers...
             //TODO SET CURRENT THREAD TO ACTIVE?
-            kmp_sched_p->thread_active[i][j] = 0;
+            kmp_sched_p->thread_active[i][j] = THREAD_SLEEP;
         }
     }
-
+    kmp_sched_p->thread_active[thread->th.th_cluster][__kmp_get_tid()] = THREAD_AWAKE;
 }
 
 static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid) {
@@ -4327,6 +4326,19 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
             break;
         }
     }
+
+    // All threads in optimal cluster is busy.
+    if(optimal_thread == tid){
+        // You are in the optimal cluster, schedule on yourself
+        if (optimal_cluster == thread->th.th_cluster)
+            return tid;
+
+        // You are not in the optimal cluster, schedule on thread 0 in the optimal cluster
+        else
+            return ((thread->th.th_cluster + 1) % 2) * CLUSTER_A_SIZE;
+    }
+
+
     return optimal_thread;
 
 }
@@ -4349,12 +4361,7 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
 
   // If the task has run before, get the task type
   if (__kmp_contains_def(task->routine)){
-      task_definition_t task_type = __kmp_get_def(task->routine);
-      switch(task_type){
-          case compute_bound: taskdata->td_task_type = TASK_CPU; break;
-          case cache_intensive: taskdata->td_task_type = TASK_CACHE; break;
-          case memory_bound: taskdata->td_task_type = TASK_MEMORY; break;
-      }
+      taskdata->td_task_type= __kmp_get_def(task->routine);
   }
   // Otherwise mark it as undefined
   else{
@@ -4381,7 +4388,9 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
     // Putting target thread as awake, otherwise if there are more tasks incoming
     // They will be given to the thread before waking up
     // TODO Gives segmentation fault... why?
-    //__kmp_thread_active_status(thread_sched->th.th_cluster, tid_sched, THREAD_AWAKE);
+    //printf("thread_sched->th.th_cluster = %d\n", thread_sched->th.th_cluster);
+    //printf("tid_sched = %d\n", tid_sched);
+    __kmp_thread_active_status(thread_sched->th.th_cluster, tid_sched, THREAD_AWAKE);
     printf("Task %d scheduled by thread %d on thread %d \n", taskdata->td_task_id, tid, tid_sched);
     thread_sched->th.th_cv.notify_all();
 
