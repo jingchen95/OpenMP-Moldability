@@ -55,6 +55,11 @@
 #endif // BUILD_TIED_TASK_STACK
 
 //ME1
+#define DEBUG_PRINT_ALL 0
+#define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
+
 #define MAX_STEAL_ATTEMPTS 5
 #define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
 
@@ -63,7 +68,7 @@
 #define CLUSTER_B_ACTIVE 0
 #define CLUSTER_A 0
 #define CLUSTER_B 1
-#define CLUSTER_A_SIZE 4 // threads on cluster A
+#define CLUSTER_A_SIZE 8 // threads on cluster A
 #define CLUSTER_B_SIZE 0 // threads on cluster B
 
 #define TASK_TYPES 3

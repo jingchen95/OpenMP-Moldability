@@ -483,9 +483,9 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   {
     thread_data->td.td_deque[thread_data->td.td_deque_tail] =
         taskdata; // Push taskdata
-
+#if DEBUG_PRINT_THREAD_INFO
     printf("Task %d pushed by thread %d to own queue\n", taskdata->td_task_id, __kmp_tid_from_gtid(gtid));
-
+#endif
 
     thread_data->td.td_deque_tail =
         (thread_data->td.td_deque_tail + 1) & TASK_DEQUE_MASK(thread_data->td);
@@ -608,8 +608,10 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   __kmp_read_system_time(&current_time);
   // Add extra execution time
   current_task->td_previous_exectime +=  (current_time - current_task->td_starttime);
+#if DEBUG_PRINT_THREAD_INFO
   // Debug message
   printf("Started working on task %d on thread %d\n", taskdata->td_task_id, tid);
+#endif
   taskdata->td_starttime = current_time;
 
   //Classification just testing so far
@@ -982,10 +984,11 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   kmp_uint64 cycles_finish = current_cycles - taskdata->td_cycles_start + taskdata->td_cycles_prev;
   kmp_uint64 instructions_finish = current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
   kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
+#if DEBUG_PRINT_TASK_INFO
   // Debug print
   printf("Finished task %d on thread %d in %f microseconds\n Used %llu CPU cycles, %llu instructions and %llu cachemisses\n"
          , taskdata->td_task_id, tid ,current_time, cycles_finish, instructions_finish, cachemiss_finish);
-
+#endif
 
   // If we don't get a valid time, we ignore the history of this task
   if (finish_time != 0) {
@@ -1051,12 +1054,6 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       }
       thread->th.th_current_task = resumed_task; // restore current_task
       resumed_task->td_flags.executing = 1; // resume previous task
-      //ME1
-      // Remove this? ...unlikely
-      // Previous task start time
-      printf("Reached unlikely\n");
-      resumed_task->td_starttime = current_time;
-      //ME2
       KA_TRACE(10, ("__kmp_task_finish(exit): T#%d partially done task %p, "
                     "resuming task %p\n",
                     gtid, taskdata, resumed_task));
@@ -3137,8 +3134,9 @@ static inline int __kmp_execute_tasks_template(
   if (thread->th.th_perf_init_flag == 0) {
       //kmp_int32 pid = getpid();
       kmp_int32 cpu = sched_getcpu();
+#if DEBUG_PRINT_THREAD_INFO
       printf("TID = %d, GTID = %d, CPU = %u \n", tid, gtid, cpu);
-
+#endif
       thread->th.perf_attr[0].type = PERF_TYPE_HARDWARE;
       thread->th.perf_attr[0].config = PERF_COUNT_HW_REF_CPU_CYCLES;
       thread->th.perf_attr[0].disabled = 0;
@@ -3256,7 +3254,9 @@ static inline int __kmp_execute_tasks_template(
                   }
               } else {
                   //Woken up by another thread
+#if DEBUG_PRINT_THREAD_INFO
                   printf("Thread %d woken up\n", __kmp_tid_from_gtid(gtid));
+#endif
                   thread->th.th_sleep_shift = 0;
                   task = __kmp_remove_my_task(thread, gtid, task_team, is_constrained);
               }
@@ -3706,7 +3706,9 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
       kmp_info_t *thread = __kmp_threads[i];
 
       int gtid_test = __kmp_gtid_from_tid(i, team);
+#if DEBUG_PRINT_THREAD_INFO
       printf("gtid = %d, i=%d\n", gtid_test,i);
+#endif
       if (thread_data->td.td_deque == NULL) {
         __kmp_alloc_task_deque(thread, thread_data);
       }
@@ -4214,7 +4216,13 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
      */
 
     // Else add the value
-    kmp_perf_p->execution_times[cluster][tasktype] = execution_time; //TODO Change this to a weighted value
+    if (kmp_perf_p->execution_times[cluster][tasktype] == 0){
+        kmp_perf_p->execution_times[cluster][tasktype] = execution_time;
+    }
+    else{
+        kmp_perf_p->execution_times[cluster][tasktype] = (kmp_perf_p->execution_times[cluster][tasktype] / 2) +
+                (execution_time / 2);
+    }
 }
 
 // Get the execution time for given cluster and task type
@@ -4263,6 +4271,18 @@ static void __kmp_scheduler_init(kmp_info_t *thread){
 }
 
 static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid) {
+    //debug
+#if DEBUG_PRINT_PERFORMANCE_MODEL_INFO
+    if (global_taskcounter % 10 == 1){
+        printf("Performance model update after %d tasks\nExecution times : CPU | CACHE | MEMORY\n",
+               global_taskcounter);
+        for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
+            printf("                | %d  | %d    | %d\n", kmp_perf_p->execution_times[cluster][TASK_CPU],
+                   kmp_perf_p->execution_times[cluster][TASK_CACHE],
+                   kmp_perf_p->execution_times[cluster][TASK_MEMORY]);
+        }
+    }
+#endif
     //kmp_int32 nthreads = thread->th.th_task_team->tt.tt_nproc;
     //kmp_uint8 r_cluster = (__kmp_get_random(thread) % CLUSTER_AMOUNT) - 1;
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
@@ -4378,7 +4398,9 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   current = thread_sched->th.th_current_task;
 
   if (!__kmp_task_is_allowed(sched_gtid, 1, taskdata, current)){
+#if DEBUG_PRINT_THREAD_INFO
       printf("Task not allowed for thread %d\n", tid_sched);
+#endif
       return false;
   }
 
@@ -4391,7 +4413,9 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
     //printf("thread_sched->th.th_cluster = %d\n", thread_sched->th.th_cluster);
     //printf("tid_sched = %d\n", tid_sched);
     __kmp_thread_active_status(thread_sched->th.th_cluster, tid_sched, THREAD_AWAKE);
+#if DEBUG_PRINT_THREAD_INFO
     printf("Task %d scheduled by thread %d on thread %d \n", taskdata->td_task_id, tid, tid_sched);
+#endif
     thread_sched->th.th_cv.notify_all();
 
   }
