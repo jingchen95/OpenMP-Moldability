@@ -4321,7 +4321,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
 
                 // the idle power consumption is shared between current cluster and the idle clusters.
                 kmp_uint8 cluster_awake = 0;
-                for (kmp_int32 curr_thread = 0; curr_thread < CLUSTER_A_SIZE; curr_thread++) {
+                for (kmp_int32 curr_thread = 0; curr_thread < kmp_sched_p->cluster_tid_entries[cluster]; curr_thread++) {
                     if (kmp_sched_p->thread_active[cluster][curr_thread] == THREAD_AWAKE) {
                         cluster_awake = 1;
                         break;
