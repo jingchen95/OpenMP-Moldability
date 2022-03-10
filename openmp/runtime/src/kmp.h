@@ -55,7 +55,8 @@
 #endif // BUILD_TIED_TASK_STACK
 
 //ME1
-#define DEBUG_PRINT_ALL 0
+
+#define DEBUG_PRINT_ALL 1
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
@@ -70,6 +71,12 @@
 #define CLUSTER_B 1
 #define CLUSTER_A_SIZE 8 // threads on cluster A
 #define CLUSTER_B_SIZE 0 // threads on cluster B
+
+#define FLOPS_PER_CYCLE 30
+
+#define AI_CPU_LIMIT 2500
+#define AI_CACHE_LIMIT 1000
+//#define AI_MEMORY_LIMIT 500 //Not used, everything below cache limit
 
 #define TASK_TYPES 3
 #define TASK_CPU 0
