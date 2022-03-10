@@ -64,18 +64,21 @@
 #define MAX_STEAL_ATTEMPTS 5
 #define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
 
-// Hardcoded variables, Assumes CLUSTER_A_SIZE is bigger than CLUSTER_B_SIZE
+// Hardcoded variables, Must be set for each machine
+// Assumes CLUSTER_A_SIZE is bigger than CLUSTER_B_SIZE
 #define CLUSTER_AMOUNT 1 // Number of clusters
 #define CLUSTER_B_ACTIVE 0
-#define CLUSTER_A 0
-#define CLUSTER_B 1
 #define CLUSTER_A_SIZE 8 // threads on cluster A
 #define CLUSTER_B_SIZE 0 // threads on cluster B
 
-#define FLOPS_PER_CYCLE 30
+#define CLUSTER_A 0
+#define CLUSTER_B 1
 
-#define AI_CPU_LIMIT 2500
-#define AI_CACHE_LIMIT 1000
+#define FLOPS_PER_CYCLE 30 // Must be set per machine
+
+// AI values to categories task types, in the scale of AI*100
+#define AI_CPU_LIMIT 2500 // Everything above this value is set as a CPU task
+#define AI_CACHE_LIMIT 1000 // Everything above up to and including AI_CPU_LIMIT is set as a CACHE task
 //#define AI_MEMORY_LIMIT 500 //Not used, everything below cache limit
 
 #define TASK_TYPES 3
@@ -2826,7 +2829,9 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   perf_event_attr perf_attr[3];
 
   // TODO cluster currently hardcoded, fix for use with more then one cluster
-  kmp_uint8 th_cluster = CLUSTER_A;
+  // TODO Probably a better idea to store a hashmap with these variables instead of sticking them to the thread struct
+  kmp_uint8 th_cluster;
+  kmp_uint8 th_sched_pos;
 
   kmp_uint16 th_sleep_shift = 0;
   kmp_uint16 th_steal_attempts = 0;
@@ -3085,16 +3090,16 @@ struct fortran_inx_info {
 //ME1
 struct kmp_performance {
     kmp_uint32 frequencies[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Frequency for each core for current execution times
-    kmp_uint32 execution_times[CLUSTER_AMOUNT][TASK_TYPES];
+    kmp_uint32 execution_times[CLUSTER_AMOUNT][TASK_TYPES]; // predicted execution time for each task type
 };
 
 struct kmp_scheduler {
-    kmp_uint8 num_clusters = CLUSTER_AMOUNT;
-    // TODO Currently broken with struct declaration, yet not implemented in the code anyway
-    //kmp_info_t cluster_threads[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Should be max of clusters size
+    kmp_uint8 num_clusters = CLUSTER_AMOUNT; // Number of clusters
+    kmp_int32 cluster_tids[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // thread identifiers "tid" for each cluster
+    kmp_uint8 cluster_tid_entries[CLUSTER_AMOUNT]; // thread counter for each cluster
     kmp_uint32 idle_power[CLUSTER_AMOUNT];
-    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES];
-    kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_A_SIZE];
+    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES]; //TODO not finished
+    kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_A_SIZE]; // Threads status, 1 if awake, 0 sleeping
 };
 
 //ME2
