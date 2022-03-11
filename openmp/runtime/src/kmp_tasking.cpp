@@ -4281,7 +4281,7 @@ static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid){
     kmp_uint8 cluster_counter = kmp_sched_p->cluster_tid_entries[cluster];
     kmp_sched_p->cluster_tids[cluster][cluster_counter] = tid; // Adds tid to the schedule struct
     ++kmp_sched_p->cluster_tid_entries[cluster]; // increment the cluster counter
-    kmp_sched_p->thread_active[cluster][cluster_counter] = THREAD_AWAKE; // Set thread as active
+    kmp_sched_p->thread_active[cluster][cluster_counter] = THREAD_SLEEP; // Set thread as ready for tasks
     return cluster_counter;
 }
 
