@@ -4203,8 +4203,10 @@ release_and_exit:
 static void __kmp_performance_model_init(){
     std::lock_guard<std::mutex> lock(performance_model_m);
     for(int i = 0; i < CLUSTER_AMOUNT; i++){
-        for (int j = 0; j < CLUSTER_A_SIZE; j++){
+        for (int j = 0; j < CLUSTER_SIZE; j++){
             kmp_perf_p->frequencies[i][j] = 0;
+        }
+        for (int j = 0; j < TASK_TYPES; j++){
             kmp_perf_p->execution_times[i][j] = 0;
         }
     }
@@ -4212,7 +4214,7 @@ static void __kmp_performance_model_init(){
 // Resets the performance model struct for given cluster
 // To be used when the frequency for the cluster is changed
 static void __kmp_performance_model_reset(kmp_uint8 cluster){
-    for (int i = 0; i < CLUSTER_A_SIZE; i++){
+    for (int i = 0; i < TASK_TYPES; i++){
         kmp_perf_p->execution_times[cluster][i] = 0;
     }
 }
@@ -4227,10 +4229,11 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
      }
      */
 
-    // Else add the value
+    // No previous record, just add the value
     if (kmp_perf_p->execution_times[cluster][tasktype] == 0){
         kmp_perf_p->execution_times[cluster][tasktype] = execution_time;
     }
+    // Previous record exist, calculate a weighted value
     else{
         kmp_perf_p->execution_times[cluster][tasktype] = (kmp_perf_p->execution_times[cluster][tasktype] / 2) +
                 (execution_time / 2);
@@ -4270,14 +4273,6 @@ static void __kmp_scheduler_init(kmp_info_t *thread){
     kmp_sched_p->runtime_power[CLUSTER_B][TASK_MEMORY][HIGH_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_MEMORY_HIGH;
 #endif
      */
-    /*
-    for (int i = 0; i < CLUSTER_AMOUNT; i++){
-        for (int j = 0; j < CLUSTER_A_SIZE; j++){
-            kmp_sched_p->thread_active[i][j] = THREAD_SLEEP;
-        }
-    }
-    kmp_sched_p->thread_active[thread->th.th_cluster][__kmp_get_tid()] = THREAD_AWAKE;
-     */
 }
 
 // Adds the calling threads cluster and tid to the scheduler
@@ -4303,8 +4298,6 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
         }
     }
 #endif
-    //kmp_int32 nthreads = thread->th.th_task_team->tt.tt_nproc;
-    //kmp_uint8 r_cluster = (__kmp_get_random(thread) % CLUSTER_AMOUNT) - 1;
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
     kmp_uint8 optimal_cluster = 0;
     kmp_uint32 minimum_energy = UINT_MAX;
@@ -4384,9 +4377,6 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   kmp_team_t *team = __kmp_get_team();
   taskdata = KMP_TASK_TO_TASKDATA(task);
 
-  // schedule to random thread to begin with
-  // kmp_int32 nthreads = thread->th.th_task_team->tt.tt_nproc;
-
   // If the task has run before, get the task type
   if (__kmp_contains_def(task->routine)){
       taskdata->td_task_type= __kmp_get_def(task->routine);
@@ -4417,9 +4407,6 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   if (result) {
     // Putting target thread as awake, otherwise if there are more tasks incoming
     // They will be given to the thread before waking up
-    // TODO Gives segmentation fault... why?
-    //printf("thread_sched->th.th_cluster = %d\n", thread_sched->th.th_cluster);
-    //printf("tid_sched = %d\n", tid_sched);
     __kmp_thread_active_status(thread_sched->th.th_cluster, thread_sched->th.th_sched_pos, THREAD_AWAKE);
 #if DEBUG_PRINT_THREAD_INFO
     printf("Task %d scheduled by thread %d on thread %d \n", taskdata->td_task_id, tid, tid_sched);
