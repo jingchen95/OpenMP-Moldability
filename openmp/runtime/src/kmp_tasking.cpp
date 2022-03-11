@@ -1000,25 +1000,28 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
         // If task type is unknown, we need to declare what type it is
         if (taskdata->td_task_type == TASK_UNDEFINED){
-            if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
-            task_definition_t task_type;
-            kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
-            if (arithmetic_intensity > AI_CPU_LIMIT){
-                taskdata->td_task_type = TASK_CPU;
-                task_type = compute_bound;
-            }
-            else if (arithmetic_intensity > AI_CACHE_LIMIT){
-                taskdata->td_task_type = TASK_CACHE;
-                task_type = cache_intensive;
+            if(!__kmp_contains_def(task->routine)) {
+                if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
+                task_definition_t task_type;
+                kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
+                if (arithmetic_intensity > AI_CPU_LIMIT) {
+                    taskdata->td_task_type = TASK_CPU;
+                    task_type = compute_bound;
+                } else if (arithmetic_intensity > AI_CACHE_LIMIT) {
+                    taskdata->td_task_type = TASK_CACHE;
+                    task_type = cache_intensive;
+                } else {
+                    taskdata->td_task_type = TASK_MEMORY;
+                    task_type = memory_bound;
+                }
+#if DEBUG_PRINT_TASK_INFO
+                printf("ARITHMETIC INTENSITY = %d, categorised as %d\n", arithmetic_intensity, task_type);
+#endif
+                __kmp_add_def(task->routine, task_type);
             }
             else{
-                taskdata->td_task_type = TASK_MEMORY;
-                task_type = memory_bound;
+                taskdata->td_task_type = __kmp_get_def(task->routine);
             }
-#if DEBUG_PRINT_TASK_INFO
-            printf("ARITHMETIC INTENSITY = %d, categorised as %d\n", arithmetic_intensity, task_type);
-#endif
-            __kmp_add_def(task->routine, task_type);
         }
         // Update the performance model
         __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
