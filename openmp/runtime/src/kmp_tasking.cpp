@@ -997,7 +997,9 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   if (finish_time != 0) {
         // freq in MHZ
         kmp_uint32 frequency = cycles_finish / finish_time;
-
+#if DEBUG_PRINT_TASK_INFO
+        printf("Frequency: %d Mhz\n", frequency);
+#endif
         // If task type is unknown, we need to declare what type it is
         if (taskdata->td_task_type == TASK_UNDEFINED){
             if(!__kmp_contains_def(task->routine)) {
@@ -3152,21 +3154,23 @@ static inline int __kmp_execute_tasks_template(
 #if DEBUG_PRINT_THREAD_INFO
       printf("TID = %d, GTID = %d, CPU = %u \n", tid, gtid, cpu);
 #endif
-      thread->th.perf_attr[0].type = PERF_TYPE_HARDWARE;
+      for (int i = 0; i < 3; i++) {
+          thread->th.perf_attr[i].type = PERF_TYPE_HARDWARE;
+          thread->th.perf_attr[i].disabled = 0;
+          thread->th.perf_attr[i].exclude_kernel = 1;
+          thread->th.perf_attr[i].exclude_hv = 1;
+          thread->th.perf_attr[i].exclude_idle = 1;
+      }
       thread->th.perf_attr[0].config = PERF_COUNT_HW_REF_CPU_CYCLES;
-      thread->th.perf_attr[0].disabled = 0;
+      thread->th.perf_attr[1].config = PERF_COUNT_HW_INSTRUCTIONS;
+      thread->th.perf_attr[2].config = PERF_COUNT_HW_CACHE_MISSES;
+
       thread->th.th_counter_cycles = perf_event_open(&thread->th.perf_attr[0], 0, cpu, -1, 0);
       if (thread->th.th_counter_cycles < 0) printf("Failed to open counter for cycles\n");
 
-      thread->th.perf_attr[1].type = PERF_TYPE_HARDWARE;
-      thread->th.perf_attr[1].config = PERF_COUNT_HW_INSTRUCTIONS;
-      thread->th.perf_attr[1].disabled = 0;
       thread->th.th_counter_instructions = perf_event_open(&thread->th.perf_attr[1], 0, cpu, -1, 0);
       if (thread->th.th_counter_instructions < 0) printf("Failed to open counter for instructions\n");
 
-      thread->th.perf_attr[2].type = PERF_TYPE_HARDWARE;
-      thread->th.perf_attr[2].config = PERF_COUNT_HW_CACHE_MISSES;
-      thread->th.perf_attr[2].disabled = 0;
       thread->th.th_counter_cachemiss = perf_event_open(&thread->th.perf_attr[2], 0, cpu, -1, 0);
       if (thread->th.th_counter_cachemiss < 0) printf("Failed to open counter for cache misses\n");
 
