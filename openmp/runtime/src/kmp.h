@@ -80,8 +80,8 @@
 #define FLOPS_PER_CYCLE 30 // Must be set per machine
 
 // AI values to categories task types, in the scale of AI*100
-#define AI_CPU_LIMIT 2500 // Everything above this value is set as a CPU task
-#define AI_CACHE_LIMIT 1000 // Everything above up to and including AI_CPU_LIMIT is set as a CACHE task
+#define AI_CPU_LIMIT 1150 // Everything above this value is set as a CPU task
+#define AI_CACHE_LIMIT 523 // Everything above up to and including AI_CPU_LIMIT is set as a CACHE task
 //#define AI_MEMORY_LIMIT 500 //Not used, everything below cache limit
 
 #define TASK_TYPES 3
