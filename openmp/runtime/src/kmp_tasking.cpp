@@ -631,19 +631,27 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   // Get value
   kmp_uint64 current_cycles = 0;
   kmp_uint64 current_instructions = 0;
-  kmp_uint64 current_cachemiss = 0;
+
   // Read from counters
   read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
   read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
-  read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+
   // Add on previous counters
   current_task->td_cycles_prev += (current_cycles - current_task->td_cycles_start);
   current_task->td_instructions_prev += (current_instructions - current_task->td_instructions_start);
-  current_task->td_cachemiss_prev += (current_cachemiss - current_task->td_cachemiss_start);
+
   // Update starting counters
   taskdata->td_cycles_start = current_cycles;
   taskdata->td_instructions_start = current_instructions;
-  taskdata->td_cachemiss_start = current_cachemiss;
+
+  // Only read the cache miss counter if the task is undefined
+  if (taskdata->td_task_type == TASK_UNDEFINED){
+      kmp_uint64 current_cachemiss = 0;
+      read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+      current_task->td_cachemiss_prev += (current_cachemiss - current_task->td_cachemiss_start);
+      taskdata->td_cachemiss_start = current_cachemiss;
+  }
+
   //ME2
 
 // Add task to stack if tied
@@ -978,19 +986,18 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   //PERF
   kmp_uint64 current_cycles = 0;
   kmp_uint64 current_instructions = 0;
-  kmp_uint64 current_cachemiss = 0;
+  kmp_uint64 current_cachemiss = 0; // Need to be declared for the resumed task
   // Read from counters
   read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
   read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
-  read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
   // Get final counter values
   kmp_uint64 cycles_finish = current_cycles - taskdata->td_cycles_start + taskdata->td_cycles_prev;
   kmp_uint64 instructions_finish = current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
-  kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
+
 #if DEBUG_PRINT_TASK_INFO
   // Debug print
-  printf("Finished task %d on thread %d in %f microseconds\n Used %llu CPU cycles, %llu instructions and %llu cachemisses\n"
-         , taskdata->td_task_id, tid ,current_time, cycles_finish, instructions_finish, cachemiss_finish);
+  printf("Finished task %d on thread %d in %f microseconds\n Used %llu CPU cycles, %llu instructions\n"
+         , taskdata->td_task_id, tid ,current_time, cycles_finish, instructions_finish);
 #endif
 
   // If we don't get a valid time, we ignore the history of this task
@@ -998,11 +1005,16 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
         // freq in MHZ
         kmp_uint32 frequency = cycles_finish / finish_time;
 #if DEBUG_PRINT_TASK_INFO
-        printf("Frequency: %d Mhz\n", frequency);
+        printf("Current frequency on thread %d: %d Mhz\n", tid, frequency);
 #endif
         // If task type is unknown, we need to declare what type it is
         if (taskdata->td_task_type == TASK_UNDEFINED){
+            // If the routine haven't been classified during this execution, classify the task
             if(!__kmp_contains_def(task->routine)) {
+                // Only read the cache miss counter if necessary
+                read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+                kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
+
                 if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
                 task_definition_t task_type;
                 kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
@@ -1017,7 +1029,12 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
                     task_type = memory_bound;
                 }
 #if DEBUG_PRINT_TASK_INFO
-                printf("ARITHMETIC INTENSITY = %d, categorised as %d\n", arithmetic_intensity, task_type);
+                std::string str;
+                if (arithmetic_intensity < AI_CACHE_LIMIT) str = "TASK_MEMORY";
+                else if (arithmetic_intensity < AI_CPU_LIMIT) str = "TASK_CACHE";
+                else str = "TASK_CPU";
+                printf("ARITHMETIC INTENSITY = %d, categorised as %s on thread %d with %llu cachemisses\n",
+                       arithmetic_intensity, str.c_str(), tid, cachemiss_finish);
 #endif
                 __kmp_add_def(task->routine, task_type);
             }
@@ -1188,7 +1205,11 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   //PERF
   resumed_task->td_cycles_start = current_cycles;
   resumed_task->td_instructions_start = current_instructions;
-  resumed_task->td_cachemiss_start = current_cachemiss;
+  // Only read the cache miss counter if the task is undefined and the finished task did not read from it
+  if(resumed_task->td_task_type == TASK_UNDEFINED && current_cachemiss == 0){
+      read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+      resumed_task->td_cachemiss_start = current_cachemiss;
+  }
   //ME2
   resumed_task->td_flags.executing = 1; // resume previous task
 
