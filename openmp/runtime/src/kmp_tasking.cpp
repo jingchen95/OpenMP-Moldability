@@ -1013,17 +1013,17 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       //TODO check if resumed task is undefined, then keep them open..
       //TODO may cause problems if there is no resumed task?
       __kmp_perf_close(thread);
-      // freq in MHZ
-      kmp_uint32 frequency = cycles_finish / finish_time;
+
 
 #if DEBUG_PRINT_TASK_INFO
       // Debug print
+      // freq in MHZ
+      kmp_uint32 frequency = cycles_finish / finish_time;
     printf("Finished task %d on thread %d in %f microseconds\n Used %llu CPU cycles, %llu instructions freq=%d MHz\n"
              , taskdata->td_task_id, tid ,current_time, cycles_finish, instructions_finish, frequency);
 #endif
       // If the routine haven't been classified during this execution, classify the task
       if(!__kmp_contains_def(task->routine)) {
-          // Only read the cache miss counter if necessary
           if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
           task_definition_t task_type;
           kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
@@ -1045,15 +1045,17 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
                 printf("ARITHMETIC INTENSITY = %d, categorised as %s on thread %d with %llu cachemisses\n",
                        arithmetic_intensity, str.c_str(), tid, cachemiss_finish);
 #endif
+          // Add the task routine with a defined task type
           __kmp_add_def(task->routine, task_type);
       }
+      // A task with the same routine already classified the task, get the classification
       else{
           taskdata->td_task_type = __kmp_get_def(task->routine);
       }
 
   }
   // If we don't get a valid time, we ignore the history of this task
-  if (finish_time != 0){
+  if (finish_time != 0 && taskdata->td_task_type != TASK_UNDEFINED){
       __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
                                   finish_time);
   }
