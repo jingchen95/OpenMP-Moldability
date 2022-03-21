@@ -46,7 +46,7 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
 static void __kmp_bottom_half_finish_proxy(kmp_int32 gtid, kmp_task_t *ptask);
 
 //ME1
-static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
+static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
                                 kmp_int32 tid);
 static void __kmp_performance_model_init();
 static void __kmp_performance_model_reset(kmp_uint8 cluster);
@@ -459,6 +459,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   }
   // Lock the deque for the task push operation
   if (!locked) {
+      printf("Aquire lock \n");
     __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
     // Need to recheck as we can get a proxy task from thread outside of OpenMP
     if (TCR_4(thread_data->td.td_deque_ntasks) >=
@@ -467,6 +468,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
           __kmp_task_is_allowed(gtid, __kmp_task_stealing_constraint, taskdata,
                                 thread->th.th_current_task)) {
         __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
+          printf("Releasing lock\n");
         KA_TRACE(20, ("__kmp_push_task: T#%d deque is full on 2nd check; "
                       "returning TASK_NOT_PUSHED for task %p\n",
                       gtid, taskdata));
@@ -482,8 +484,16 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
                    TASK_DEQUE_SIZE(thread_data->td));
 
   //ME1
-  if (!__kmp_schedule_task(thread, task, tid)) 
-  {
+  kmp_int32 schedule_result = __kmp_schedule_task(thread, task, tid);
+  kmp_int32 push_result;
+  if (schedule_result  == TASK_SUCCESSFULLY_SCHEDULED){
+      push_result = TASK_SUCCESSFULLY_PUSHED;
+  }else if (schedule_result == INVOKE_NOW &&
+          __kmp_task_is_allowed(gtid, __kmp_task_stealing_constraint, taskdata,
+                                thread->th.th_current_task)){
+      push_result = TASK_NOT_PUSHED;
+  }
+  else{
     thread_data->td.td_deque[thread_data->td.td_deque_tail] =
         taskdata; // Push taskdata
 #if DEBUG_PRINT_THREAD_INFO
@@ -496,6 +506,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
           TCR_4(thread_data->td.td_deque_ntasks) + 1); // Adjust task count
     KMP_FSYNC_RELEASING(thread->th.th_current_task); // releasing self
     KMP_FSYNC_RELEASING(taskdata); // releasing child
+    push_result = TASK_SUCCESSFULLY_PUSHED;
     KA_TRACE(20,
              ("__kmp_push_task: T#%d returning TASK_SUCCESSFULLY_PUSHED: "
               "task=%p ntasks=%d head=%u tail=%u\n",
@@ -523,7 +534,9 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   //ME2
   __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
 
-  return TASK_SUCCESSFULLY_PUSHED;
+  printf("Releasing lock\n");
+
+  return push_result;
 }
 
 // __kmp_pop_current_task_from_thread: set up current task from called thread
@@ -1960,7 +1973,9 @@ kmp_int32 __kmp_omp_task(kmp_int32 gtid, kmp_task_t *new_task,
     kmp_taskdata_t *current_task = __kmp_threads[gtid]->th.th_current_task;
     if (serialize_immediate)
       new_taskdata->td_flags.task_serial = 1;
+    printf("Start invoking\n");
     __kmp_invoke_task(gtid, new_task, current_task);
+    printf("Done invoking\n");
   }
 
   return TASK_CURRENT_NOT_QUEUED;
@@ -4316,7 +4331,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
             // first check if all threads per curr_cluster are executing tasks or are sleeping
             // Get idle power consumption, if cores of an entire cluster are sleeping
             kmp_uint32 idle_power = kmp_sched_p->idle_power[curr_cluster];
-            for (kmp_int32 cluster = 0; curr_cluster < kmp_sched_p->num_clusters;) {
+            for (kmp_int32 cluster = 0; cluster < kmp_sched_p->num_clusters;cluster++) {
                 if (curr_cluster == cluster) continue;
 
                 // the idle power consumption is shared between current cluster and the idle clusters.
@@ -4329,6 +4344,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
                 }
                 // if one thread on other cluster is awake, ignore its idle power
                 idle_power += cluster_awake ? 0 : kmp_sched_p->idle_power[cluster];
+                if (curr_cluster < kmp_sched_p->num_clusters) printf("True\n");
             }
             // Get the running power consumption from the power profiler, depending on frequency etc
             // TODO currently frequency independent, create function that gets the freq and calculates...
@@ -4346,13 +4362,13 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
                 optimal_cluster = curr_cluster;
                 minimum_energy = energy;
             }
-
         }
     }
     else{
         // TODO If tasktype is unknown, select fastest? cluster for identification
         optimal_cluster = CLUSTER_A;
     }
+
     // We now have the optimal cluster
     // schedule task on optimal thread right now picks the first sleeping thread it finds
     // If unable to find a sleeping thread, schedule task on yourself
@@ -4376,7 +4392,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
 // function to perform the scheduling algorithm and
 // give the task to the best thread
 // returns true/false depening on if the task was successfully scheduled
-static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
+static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
                                 kmp_int32 tid) {
 
   kmp_taskdata_t *taskdata, *current;
@@ -4395,7 +4411,18 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   // Task mapping algorithm, returns the tid of preferable thread to schedule
   kmp_int32 tid_sched = __kmp_task_mapping(thread, task, tid);
 
-  if (tid_sched == tid) return false;
+  if (tid_sched == tid) {
+      kmp_task_team_t *task_team = thread->th.th_task_team;
+      kmp_thread_data_t *thread_data;
+      thread_data = &task_team->tt.tt_threads_data[tid];
+      if (taskdata->td_task_type == TASK_UNDEFINED &&
+              TCR_4(thread_data->td.td_deque_ntasks) > 2*__kmp_get_team_num_threads(__kmp_get_gtid())){
+          printf("Many undefined tasks, invoking now\n");
+          return INVOKE_NOW;
+      }
+
+      return TASK_SCHEDULE_SELF;
+  }
 
   int sched_gtid = __kmp_gtid_from_tid(tid_sched, team);
   kmp_info_t *thread_sched =  __kmp_thread_from_gtid(sched_gtid);
@@ -4406,12 +4433,11 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
 #if DEBUG_PRINT_THREAD_INFO
       printf("Task not allowed for thread %d\n", tid_sched);
 #endif
-      return false;
+      return TASK_SCHEDULE_SELF;
   }
 
-  bool result = __kmp_give_task(thread_sched, tid_sched, task, 1);
 
-  if (result) {
+  if (__kmp_give_task(thread_sched, tid_sched, task, 1)) {
     // Putting target thread as awake, otherwise if there are more tasks incoming
     // They will be given to the thread before waking up
     __kmp_thread_active_status(thread_sched->th.th_cluster, thread_sched->th.th_sched_pos, THREAD_AWAKE);
@@ -4420,9 +4446,11 @@ static bool __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
 #endif
     thread_sched->th.th_cv.notify_all();
 
+    return  TASK_SUCCESSFULLY_SCHEDULED;
+
   }
 
-  return result;
+  return TASK_SCHEDULE_SELF;
 }
 // ME2
 

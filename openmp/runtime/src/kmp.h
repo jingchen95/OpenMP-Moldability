@@ -56,7 +56,7 @@
 
 //ME1
 
-#define DEBUG_PRINT_ALL 1
+#define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
@@ -69,7 +69,7 @@
 // Assumes CLUSTER_A_SIZE is bigger than CLUSTER_B_SIZE
 #define CLUSTER_AMOUNT 1 // Number of clusters
 #define CLUSTER_B_ACTIVE 0
-#define CLUSTER_A_SIZE 8 // threads on cluster A
+#define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 0 // threads on cluster B
 
 #define CLUSTER_SIZE MAX(CLUSTER_A_SIZE, CLUSTER_B_SIZE)
@@ -83,6 +83,11 @@
 #define AI_CPU_LIMIT 1150 // Everything above this value is set as a CPU task
 #define AI_CACHE_LIMIT 523 // Everything above up to and including AI_CPU_LIMIT is set as a CACHE task
 //#define AI_MEMORY_LIMIT 500 //Not used, everything below cache limit
+
+#define TASK_SUCCESSFULLY_SCHEDULED 1
+#define INVOKE_NOW 2
+#define TASK_SCHEDULE_SELF 3
+
 
 #define TASK_TYPES 3
 #define TASK_CPU 0
