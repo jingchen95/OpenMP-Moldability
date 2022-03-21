@@ -50,11 +50,13 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
                                 kmp_int32 tid);
 static void __kmp_performance_model_init();
 static void __kmp_performance_model_reset(kmp_uint8 cluster);
-static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time, kmp_uint32 freq);
+static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time);
 static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 tasktype);
 static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uint8 status);
 static void __kmp_scheduler_init(kmp_info_t *thread);
 static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid);
+static void __kmp_perf_open(kmp_info_t *thread);
+static void __kmp_perf_close(kmp_info_t *thread);
 //static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid);
 //ME2
 
@@ -628,7 +630,7 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   // Debug message
   printf("Started working on task %d on thread %d\n", taskdata->td_task_id, tid);
 #endif
-  taskdata->td_starttime = current_time;
+
 
   //Classification just testing so far
 
@@ -640,23 +642,40 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
       printf("adding routine %d\n", task->routine);
   }
   */
-  // PERF
-  // Get value
-  kmp_uint64 current_cycles = 0;
-  kmp_uint64 current_instructions = 0;
-  kmp_uint64 current_cachemiss = 0;
-  // Read from counters
-  read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
-  read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
-  read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
-  // Add on previous counters
-  current_task->td_cycles_prev += (current_cycles - current_task->td_cycles_start);
-  current_task->td_instructions_prev += (current_instructions - current_task->td_instructions_start);
-  current_task->td_cachemiss_prev += (current_cachemiss - current_task->td_cachemiss_start);
-  // Update starting counters
-  taskdata->td_cycles_start = current_cycles;
-  taskdata->td_instructions_start = current_instructions;
-  taskdata->td_cachemiss_start = current_cachemiss;
+  // Only read the cache miss counter if the task is undefined
+  if (taskdata->td_task_type == TASK_UNDEFINED) {
+      // PERF
+      // Get value
+
+      // Start the counters if not active
+      if (thread->th.th_counters_active == 0) __kmp_perf_open(thread);
+
+      // If active, increment the number of tasks currently using them
+      // TODO this may cause trouble if task migrates between threads.... removed for now
+      //else ++thread->th.th_counters_active;
+
+      kmp_uint64 current_cycles = 0;
+      kmp_uint64 current_instructions = 0;
+      kmp_uint64 current_cachemiss = 0;
+      // Read from counters
+      read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
+      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
+      read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+      // Add on previous counters
+      current_task->td_cycles_prev += (current_cycles - current_task->td_cycles_start);
+      current_task->td_instructions_prev += (current_instructions - current_task->td_instructions_start);
+      current_task->td_cachemiss_prev += (current_cachemiss - current_task->td_cachemiss_start);
+      // Update starting counters
+      taskdata->td_cycles_start = current_cycles;
+      taskdata->td_instructions_start = current_instructions;
+      taskdata->td_cachemiss_start = current_cachemiss;
+
+      // Starting counters takes time, read system time again
+      __kmp_read_system_time(&current_time);
+  }
+  // Set task start time
+  taskdata->td_starttime = current_time;
+
   //ME2
 
 // Add task to stack if tied
@@ -988,61 +1007,72 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   current_time = (current_time - taskdata->td_starttime + taskdata->td_previous_exectime) * 1000000;
   kmp_uint32 finish_time = static_cast<kmp_uint32>(current_time);
 
-  //PERF
-  kmp_uint64 current_cycles = 0;
-  kmp_uint64 current_instructions = 0;
-  kmp_uint64 current_cachemiss = 0;
-  // Read from counters
-  read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
-  read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
-  read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
-  // Get final counter values
-  kmp_uint64 cycles_finish = current_cycles - taskdata->td_cycles_start + taskdata->td_cycles_prev;
-  kmp_uint64 instructions_finish = current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
-  kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
-#if DEBUG_PRINT_TASK_INFO
-  // Debug print
-  printf("Finished task %d on thread %d in %f microseconds\n Used %llu CPU cycles, %llu instructions and %llu cachemisses\n"
-         , taskdata->td_task_id, tid ,current_time, cycles_finish, instructions_finish, cachemiss_finish);
-#endif
+  if (taskdata->td_task_type == TASK_UNDEFINED && thread->th.th_counters_active) {
+      //PERF
+      kmp_uint64 current_cycles = 0;
+      kmp_uint64 current_instructions = 0;
+      kmp_uint64 current_cachemiss = 0;
+      // Read from counters
+      read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
+      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
+      read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+      // Get final counter values
+      kmp_uint64 cycles_finish = current_cycles - taskdata->td_cycles_start + taskdata->td_cycles_prev;
+      kmp_uint64 instructions_finish =
+              current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
+      kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
 
-  // If we don't get a valid time, we ignore the history of this task
-  if (finish_time != 0) {
-        // freq in MHZ
-        kmp_uint32 frequency = cycles_finish / finish_time;
+      // Close the counters since were not using them anymore
+      //TODO check if resumed task is undefined, then keep them open..
+      //TODO may cause problems if there is no resumed task?
+      __kmp_perf_close(thread);
+
+
 #if DEBUG_PRINT_TASK_INFO
-        printf("Frequency: %d Mhz\n", frequency);
+      // Debug print
+      // freq in MHZ
+      kmp_uint32 frequency = cycles_finish / finish_time;
+    printf("Finished task %d on thread %d in %f microseconds\n Used %llu CPU cycles, %llu instructions freq=%d MHz\n"
+             , taskdata->td_task_id, tid ,current_time, cycles_finish, instructions_finish, frequency);
 #endif
-        // If task type is unknown, we need to declare what type it is
-        if (taskdata->td_task_type == TASK_UNDEFINED){
-            if(!__kmp_contains_def(task->routine)) {
-                if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
-                task_definition_t task_type;
-                kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
-                if (arithmetic_intensity > AI_CPU_LIMIT) {
-                    taskdata->td_task_type = TASK_CPU;
-                    task_type = compute_bound;
-                } else if (arithmetic_intensity > AI_CACHE_LIMIT) {
-                    taskdata->td_task_type = TASK_CACHE;
-                    task_type = cache_intensive;
-                } else {
-                    taskdata->td_task_type = TASK_MEMORY;
-                    task_type = memory_bound;
-                }
+      // If the routine haven't been classified during this execution, classify the task
+      if(!__kmp_contains_def(task->routine)) {
+          if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
+          task_definition_t task_type;
+          kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
+          if (arithmetic_intensity > AI_CPU_LIMIT) {
+              taskdata->td_task_type = TASK_CPU;
+              task_type = compute_bound;
+          } else if (arithmetic_intensity > AI_CACHE_LIMIT) {
+              taskdata->td_task_type = TASK_CACHE;
+              task_type = cache_intensive;
+          } else {
+              taskdata->td_task_type = TASK_MEMORY;
+              task_type = memory_bound;
+          }
 #if DEBUG_PRINT_TASK_INFO
-                printf("ARITHMETIC INTENSITY = %d, categorised as %d\n", arithmetic_intensity, task_type);
+          std::string str;
+                if (arithmetic_intensity < AI_CACHE_LIMIT) str = "TASK_MEMORY";
+                else if (arithmetic_intensity < AI_CPU_LIMIT) str = "TASK_CACHE";
+                else str = "TASK_CPU";
+                printf("ARITHMETIC INTENSITY = %d, categorised as %s on thread %d with %llu cachemisses\n",
+                       arithmetic_intensity, str.c_str(), tid, cachemiss_finish);
 #endif
-                __kmp_add_def(task->routine, task_type);
-            }
-            else{
-                taskdata->td_task_type = __kmp_get_def(task->routine);
-            }
-        }
-        // Update the performance model
-        __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
-                                    finish_time, frequency);
+          // Add the task routine with a defined task type
+          __kmp_add_def(task->routine, task_type);
+      }
+      // A task with the same routine already classified the task, get the classification
+      else{
+          taskdata->td_task_type = __kmp_get_def(task->routine);
+      }
 
   }
+  // If we don't get a valid time, we ignore the history of this task
+  if (finish_time != 0 && taskdata->td_task_type != TASK_UNDEFINED){
+      __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
+                                  finish_time);
+  }
+
   //ME2
 
 #if KMP_DEBUG
@@ -1199,9 +1229,21 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   //ME1
   __kmp_read_system_time(&resumed_task->td_starttime);
   //PERF
-  resumed_task->td_cycles_start = current_cycles;
-  resumed_task->td_instructions_start = current_instructions;
-  resumed_task->td_cachemiss_start = current_cachemiss;
+  if (resumed_task->td_task_type == TASK_UNDEFINED) {
+      kmp_uint64 current_cycles = 0;
+      kmp_uint64 current_instructions = 0;
+      kmp_uint64 current_cachemiss = 0;
+      // Open the counters if not active
+      if (!thread->th.th_counters_active) __kmp_perf_open(thread);
+      // Read from counters
+      read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
+      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
+      read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+
+      resumed_task->td_cycles_start = current_cycles;
+      resumed_task->td_instructions_start = current_instructions;
+      resumed_task->td_cachemiss_start = current_cachemiss;
+  }
   //ME2
   resumed_task->td_flags.executing = 1; // resume previous task
 
@@ -3160,15 +3202,16 @@ static inline int __kmp_execute_tasks_template(
   //ME1
   if (thread->th.th_perf_init_flag == 0) {
       //kmp_int32 pid = getpid();
-      kmp_int32 cpu = sched_getcpu();
+      thread->th.th_cpu = sched_getcpu();
       // TODO Fix cluster initialisation here, currently hardcoded
       thread->th.th_cluster = CLUSTER_A;
       // add your tid and cluster to the scheduler
       thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
 
 #if DEBUG_PRINT_THREAD_INFO
-      printf("TID = %d, GTID = %d, CPU = %u \n", tid, gtid, cpu);
+      printf("TID = %d, GTID = %d, CPU = %u \n", tid, gtid, thread->th.th_cpu);
 #endif
+      // Initializes the perf counter attributes.
       for (int i = 0; i < 3; i++) {
           thread->th.perf_attr[i].type = PERF_TYPE_HARDWARE;
           thread->th.perf_attr[i].disabled = 0;
@@ -3180,17 +3223,7 @@ static inline int __kmp_execute_tasks_template(
       thread->th.perf_attr[1].config = PERF_COUNT_HW_INSTRUCTIONS;
       thread->th.perf_attr[2].config = PERF_COUNT_HW_CACHE_MISSES;
 
-      thread->th.th_counter_cycles = perf_event_open(&thread->th.perf_attr[0], 0, cpu, -1, 0);
-      if (thread->th.th_counter_cycles < 0) printf("Failed to open counter for cycles\n");
-
-      thread->th.th_counter_instructions = perf_event_open(&thread->th.perf_attr[1], 0, cpu, -1, 0);
-      if (thread->th.th_counter_instructions < 0) printf("Failed to open counter for instructions\n");
-
-      thread->th.th_counter_cachemiss = perf_event_open(&thread->th.perf_attr[2], 0, cpu, -1, 0);
-      if (thread->th.th_counter_cachemiss < 0) printf("Failed to open counter for cache misses\n");
-
       thread->th.th_perf_init_flag = 1;
-      //__kmp_thread_active_status(thread->th.th_cluster, tid, THREAD_AWAKE);
   }
   //ME2
 
@@ -4221,11 +4254,47 @@ release_and_exit:
 }
 
 //ME1
+// Enables perf counters
+static void __kmp_perf_open(kmp_info_t *thread){
+    // TODO may want to change the result of counter openings to a bool and return it
+    // Never failed to open so far tho
+
+    // These may be unnecessary
+    thread->th.th_counter_cycles = 0;
+    thread->th.th_counter_instructions = 0;
+    thread->th.th_counter_cachemiss = 0;
+
+    // Open the counters
+    thread->th.th_counter_cycles = perf_event_open(&thread->th.perf_attr[0], 0
+                                                   , thread->th.th_cpu, -1, 0);
+    if (thread->th.th_counter_cycles < 0) printf("Failed to open counter for cycles\n");
+
+    thread->th.th_counter_instructions = perf_event_open(&thread->th.perf_attr[1], 0,
+                                                         thread->th.th_cpu, -1, 0);
+    if (thread->th.th_counter_instructions < 0) printf("Failed to open counter for instructions\n");
+
+    thread->th.th_counter_cachemiss = perf_event_open(&thread->th.perf_attr[2], 0,
+                                                      thread->th.th_cpu, -1, 0);
+    if (thread->th.th_counter_cachemiss < 0) printf("Failed to open counter for cache misses\n");
+
+    thread->th.th_counters_active = 1;
+}
+
+// Closes the perf counters
+static void __kmp_perf_close(kmp_info_t *thread){
+    close(thread->th.th_counter_cycles);
+    close(thread->th.th_counter_cachemiss);
+    close(thread->th.th_counter_instructions);
+
+    thread->th.th_counters_active = 0;
+}
+
 // Initialized the performance model struct
 static void __kmp_performance_model_init(){
     std::lock_guard<std::mutex> lock(performance_model_m);
     for(int i = 0; i < CLUSTER_AMOUNT; i++){
         for (int j = 0; j < CLUSTER_SIZE; j++){
+            //TODO currently not using frequency, may wanna remove this
             kmp_perf_p->frequencies[i][j] = 0;
         }
         for (int j = 0; j < TASK_TYPES; j++){
@@ -4235,6 +4304,7 @@ static void __kmp_performance_model_init(){
 }
 // Resets the performance model struct for given cluster
 // To be used when the frequency for the cluster is changed
+// Currently unused
 static void __kmp_performance_model_reset(kmp_uint8 cluster){
     for (int i = 0; i < TASK_TYPES; i++){
         kmp_perf_p->execution_times[cluster][i] = 0;
@@ -4242,9 +4312,10 @@ static void __kmp_performance_model_reset(kmp_uint8 cluster){
 }
 
 // Add a new execution time sample for the performance model
-static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time, kmp_uint32 freq) {
+static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time) {
     std::lock_guard<std::mutex> lock(performance_model_m);
-    //TODO Check if frequency differs with some error margin with current, if so reset the performance model...
+    //Check if frequency differs with some error margin with current, if so reset the performance model...
+    //TODO Removed frequency since counters are expensive, make assumption based on the execution time instead..
     /*
      if (freq != kmp_perf_p->frequencies[cluster]) {
         __kmp_performance_model_reset(cluster);
