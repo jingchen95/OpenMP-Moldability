@@ -57,6 +57,7 @@ static void __kmp_scheduler_init(kmp_info_t *thread);
 static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid);
 static void __kmp_perf_open(kmp_info_t *thread);
 static void __kmp_perf_close(kmp_info_t *thread);
+static void __kmp_init_counters(kmp_info_t *thread);
 //static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid);
 //ME2
 
@@ -461,7 +462,6 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   }
   // Lock the deque for the task push operation
   if (!locked) {
-      printf("Aquire lock \n");
     __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
     // Need to recheck as we can get a proxy task from thread outside of OpenMP
     if (TCR_4(thread_data->td.td_deque_ntasks) >=
@@ -470,7 +470,6 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
           __kmp_task_is_allowed(gtid, __kmp_task_stealing_constraint, taskdata,
                                 thread->th.th_current_task)) {
         __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-          printf("Releasing lock\n");
         KA_TRACE(20, ("__kmp_push_task: T#%d deque is full on 2nd check; "
                       "returning TASK_NOT_PUSHED for task %p\n",
                       gtid, taskdata));
@@ -535,8 +534,6 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
    */
   //ME2
   __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-
-  printf("Releasing lock\n");
 
   return push_result;
 }
@@ -622,6 +619,10 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   //ME1
   kmp_int32 tid = __kmp_tid_from_gtid(gtid);
   // store away the execution time of current task before starting on the new one
+
+  // If counters aren't init, do so
+  if (thread->th.th_perf_init_flag == 0) __kmp_init_counters(thread);
+
   kmp_real64 current_time = 0;
   __kmp_read_system_time(&current_time);
   // Add extra execution time
@@ -2015,9 +2016,17 @@ kmp_int32 __kmp_omp_task(kmp_int32 gtid, kmp_task_t *new_task,
     kmp_taskdata_t *current_task = __kmp_threads[gtid]->th.th_current_task;
     if (serialize_immediate)
       new_taskdata->td_flags.task_serial = 1;
-    printf("Start invoking\n");
+
+#if DEBUG_PRINT_THREAD_INFO
+    printf("Start invoking task %d now on thread %d\n", new_taskdata->td_task_id, __kmp_get_tid());
+#endif
+
     __kmp_invoke_task(gtid, new_task, current_task);
-    printf("Done invoking\n");
+
+#if DEBUG_PRINT_THREAD_INFO
+    printf("Done invoking now on thread %d\n", __kmp_get_tid());
+#endif
+
   }
 
   return TASK_CURRENT_NOT_QUEUED;
@@ -3147,7 +3156,39 @@ uint64_t perf_event_open(struct perf_event_attr * hw,
 {
     return syscall(__NR_perf_event_open, hw, pid, cpu, grp, flags);
 }
+
+static void __kmp_init_counters(kmp_info_t *thread){
+    //kmp_int32 pid = getpid();
+    kmp_int32 tid = __kmp_get_tid();
+    thread->th.th_cpu = sched_getcpu();
+    // TODO Fix cluster initialisation here, currently hardcoded
+    thread->th.th_cluster = CLUSTER_A;
+    // add your tid and cluster to the scheduler
+    thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
+
+    #if DEBUG_PRINT_THREAD_INFO
+    printf("TID = %d, GTID = %d, CPU = %u \n", tid, __kmp_get_gtid(), thread->th.th_cpu);
+    #endif
+    // Initializes the perf counter attributes.
+    for (int i = 0; i < 3; i++) {
+        thread->th.perf_attr[i].type = PERF_TYPE_HARDWARE;
+        thread->th.perf_attr[i].disabled = 0;
+        thread->th.perf_attr[i].exclude_kernel = 1;
+        thread->th.perf_attr[i].exclude_hv = 1;
+        thread->th.perf_attr[i].exclude_idle = 1;
+    }
+    thread->th.perf_attr[0].config = PERF_COUNT_HW_REF_CPU_CYCLES;
+    thread->th.perf_attr[1].config = PERF_COUNT_HW_INSTRUCTIONS;
+    thread->th.perf_attr[2].config = PERF_COUNT_HW_CACHE_MISSES;
+
+    thread->th.th_perf_init_flag = 1;
+}
+
+
+
 //ME2
+
+
 
 // __kmp_execute_tasks_template: Choose and execute tasks until either the
 // condition is statisfied (return true) or there are none left (return false).
@@ -3200,31 +3241,7 @@ static inline int __kmp_execute_tasks_template(
   KMP_DEBUG_ASSERT(*unfinished_threads >= 0);
 
   //ME1
-  if (thread->th.th_perf_init_flag == 0) {
-      //kmp_int32 pid = getpid();
-      thread->th.th_cpu = sched_getcpu();
-      // TODO Fix cluster initialisation here, currently hardcoded
-      thread->th.th_cluster = CLUSTER_A;
-      // add your tid and cluster to the scheduler
-      thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
-
-#if DEBUG_PRINT_THREAD_INFO
-      printf("TID = %d, GTID = %d, CPU = %u \n", tid, gtid, thread->th.th_cpu);
-#endif
-      // Initializes the perf counter attributes.
-      for (int i = 0; i < 3; i++) {
-          thread->th.perf_attr[i].type = PERF_TYPE_HARDWARE;
-          thread->th.perf_attr[i].disabled = 0;
-          thread->th.perf_attr[i].exclude_kernel = 1;
-          thread->th.perf_attr[i].exclude_hv = 1;
-          thread->th.perf_attr[i].exclude_idle = 1;
-      }
-      thread->th.perf_attr[0].config = PERF_COUNT_HW_REF_CPU_CYCLES;
-      thread->th.perf_attr[1].config = PERF_COUNT_HW_INSTRUCTIONS;
-      thread->th.perf_attr[2].config = PERF_COUNT_HW_CACHE_MISSES;
-
-      thread->th.th_perf_init_flag = 1;
-  }
+  if (thread->th.th_perf_init_flag == 0) __kmp_init_counters(thread);
   //ME2
 
   while (1) { // Outer loop keeps trying to find tasks in case of single thread
@@ -4488,7 +4505,10 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
       thread_data = &task_team->tt.tt_threads_data[tid];
       if (taskdata->td_task_type == TASK_UNDEFINED &&
               TCR_4(thread_data->td.td_deque_ntasks) > 2*__kmp_get_team_num_threads(__kmp_get_gtid())){
-          printf("Many undefined tasks, invoking now\n");
+#if DEBUG_PRINT_THREAD_INFO
+          // Debug message
+           printf("Many undefined tasks, invoking task %d now on thread %d\n", taskdata->td_task_id, tid);
+#endif
           return INVOKE_NOW;
       }
 
