@@ -2150,10 +2150,8 @@ kmp_int32 __kmp_omp_taskloop_task(ident_t *loc_ref, kmp_int32 gtid,
     }
   }
 #endif
-  new_taskdata->td_task_type = 4;
 
   res = __kmp_omp_task(gtid, new_task, true);
-
 
   KA_TRACE(10, ("__kmpc_omp_task(exit): T#%d returning "
                 "TASK_CURRENT_NOT_QUEUED: loc=%p task=%p\n",
@@ -4646,11 +4644,11 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   taskdata = KMP_TASK_TO_TASKDATA(task);
 
 
-
+  // If the task has run before, get the task type
   if (__kmp_contains_def(task->routine)){
       taskdata->td_task_type= __kmp_get_def(task->routine);
   }
-      // Otherwise mark it as undefined
+  // Otherwise mark it as undefined
   else{
       taskdata->td_task_type = TASK_UNDEFINED;
   }
