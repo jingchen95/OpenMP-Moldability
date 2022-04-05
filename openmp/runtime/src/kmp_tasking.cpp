@@ -1071,7 +1071,8 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
   }
   // If we don't get a valid time, we ignore the history of this task
-  if (finish_time != 0 && taskdata->td_task_type != TASK_UNDEFINED){
+  // (Defined tasks are less than TASK_UNDEFINED, to keep Pattern tasks out)
+  if (finish_time != 0 && taskdata->td_task_type < TASK_UNDEFINED){
 
       __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
                                   finish_time, taskdata->td_taskwidth);
@@ -2149,8 +2150,10 @@ kmp_int32 __kmp_omp_taskloop_task(ident_t *loc_ref, kmp_int32 gtid,
     }
   }
 #endif
+  new_taskdata->td_task_type = 4;
 
   res = __kmp_omp_task(gtid, new_task, true);
+
 
   KA_TRACE(10, ("__kmpc_omp_task(exit): T#%d returning "
                 "TASK_CURRENT_NOT_QUEUED: loc=%p task=%p\n",
@@ -4359,8 +4362,11 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
 
     // TODO fix width associated variables, for example if the width is 4, await 4 results before adding etc.
 
-    printf("Adding performance model, cluster = %hhu, tasktype = %hhu, execution time = %u, width = %hhu\n", cluster, tasktype, execution_time, width);
-    if(tasktype == 4) return;
+    /*
+    printf("Adding performance model, cluster = %hhu, tasktype = %hhu, execution time = %u, width = %hhu\n"
+           ,cluster, tasktype, execution_time, width);
+    */
+
     // No previous record, just add the value
     if (kmp_perf_p->execution_times[cluster][tasktype][width_index] == 0){
         kmp_perf_p->execution_times[cluster][tasktype][width_index] = execution_time;
@@ -4374,7 +4380,7 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
 
 // Get the execution time for given cluster and task type
 static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint8 width){
-    return kmp_perf_p->execution_times[cluster][tasktype][width];
+    return kmp_perf_p->execution_times[cluster][tasktype][width - 1];
 }
 
 // Update activity status, status 1 = active, status 0 = sleeping
@@ -4440,6 +4446,7 @@ static kmp_uint8 __kmp_schedule_thread(kmp_info_t *thread, kmp_uint8 cluster, km
 // TODO TEMP debug, fix and remove
 int unique_taskloop_id = 0;
 
+// Task mapping algorithm for taskloop constructs
 static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid){
     //debug
 #if DEBUG_PRINT_PERFORMANCE_MODEL_INFO
@@ -4457,16 +4464,22 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     }
 #endif
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-    kmp_uint8 optimal_cluster = 0;
-    kmp_uint8 optimal_cluster_width = 1;
+    kmp_uint8 optimal_cluster;
+    kmp_uint8 optimal_cluster_width;
     kmp_uint32 minimum_energy = UINT_MAX;
 
+    // Temporary task type variable, to prevent pattern task classification from change
+    kmp_uint8 task_type;
+    // Get and set task type classification
+    if(__kmp_contains_def(task->routine)) task_type = __kmp_get_def(task->routine);
+    else task_type = TASK_UNDEFINED;
+
+    //TODO Debug remove
     ++unique_taskloop_id;
     taskdata->td_unique_tid = unique_taskloop_id;
-    //TODO Debug remove
     taskdata->td_task_id = unique_taskloop_id;
 
-    if (taskdata->td_task_type != TASK_UNDEFINED) {
+    if (task_type != TASK_UNDEFINED) {
         // TODO For each execution place (cluster...) should be randomly selected
         for (kmp_int32 curr_cluster = 0; curr_cluster < kmp_sched_p->num_clusters; curr_cluster++) {
 
@@ -4510,11 +4523,11 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                 // TODO currently frequency independent, create function that gets the freq and calculates...
                 // Need the frequency for the performance model also
                 kmp_uint32 total_power =
-                        idle_power + kmp_sched_p->runtime_power[curr_cluster][taskdata->td_task_type][0];
+                        idle_power + kmp_sched_p->runtime_power[curr_cluster][task_type][0];
 
                 // Get the execution time from the performance model
                 kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster,
-                                                                   taskdata->td_task_type, cluster_width - 1);
+                                                                   task_type, cluster_width);
                 // Calculate the energy based on the execution time and idle + runtime power consumption
                 // Depending on how we store the execution time we may need to change the scale of exec time here
                 kmp_uint32 energy = exec_time * total_power;
@@ -4530,7 +4543,9 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     }
     else{
         // TODO If tasktype is unknown, select fastest? cluster for identification
+        // TODO Change to max number of clusters...
         optimal_cluster = CLUSTER_A;
+        optimal_cluster = 1;
         optimal_cluster_width = 1;
     }
     //TODO Move this out to its own function, should return the optimal cluster and width instead
@@ -4545,14 +4560,14 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
         printf("Performance model update after %d tasks\nExecution times : CPU | CACHE | MEMORY\n",
                global_taskcounter);
         for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
-            printf("                | %d  | %d    | %d\n", kmp_perf_p->execution_times[cluster][TASK_CPU][1],
-                   kmp_perf_p->execution_times[cluster][TASK_CACHE][1],
-                   kmp_perf_p->execution_times[cluster][TASK_MEMORY][1]);
+            printf("                | %d  | %d    | %d\n", kmp_perf_p->execution_times[cluster][TASK_CPU][0],
+                   kmp_perf_p->execution_times[cluster][TASK_CACHE][0],
+                   kmp_perf_p->execution_times[cluster][TASK_MEMORY][0]);
         }
     }
 #endif
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-    kmp_uint8 optimal_cluster = 0;
+    kmp_uint8 optimal_cluster;
     kmp_uint32 minimum_energy = UINT_MAX;
 
     if (taskdata->td_task_type != TASK_UNDEFINED) {
@@ -4630,14 +4645,18 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   kmp_team_t *team = __kmp_get_team();
   taskdata = KMP_TASK_TO_TASKDATA(task);
 
-  // If the task has run before, get the task type
+
+
   if (__kmp_contains_def(task->routine)){
       taskdata->td_task_type= __kmp_get_def(task->routine);
   }
-  // Otherwise mark it as undefined
+      // Otherwise mark it as undefined
   else{
       taskdata->td_task_type = TASK_UNDEFINED;
   }
+
+  // If the task has run before, get the task type
+
     kmp_int32 tid_sched;
     if(taskdata->td_cluster == -1){
       // Task mapping algorithm, returns the tid of preferable thread to schedule
@@ -5453,8 +5472,7 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
   }
 
 //ME1
-    kmp_int32 tid = __kmp_tid_from_gtid(gtid);
-
+  kmp_int32 tid = __kmp_tid_from_gtid(gtid);
 #if DEBUG_PRINT_TASK_INFO
   printf("lowerbound = %llu\nupperbound = %llu\nnum_tasks_min = %llu\ngrainsize = %llu\ntc = %llu\n"
          , lower, upper, num_tasks_min, grainsize, tc);
@@ -5492,12 +5510,11 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
     // let's try to schedule (team_size*10) tasks
 
     //ME1
+    taskdata->td_task_type = TASK_PATTERN;
     __kmp_taskloop_mapping(thread, task, tid);
+
     printf("Task number = %d, Number of tasks recommended = %hhu\n", taskdata->td_task_id, taskdata->td_taskwidth);
-    if(unique_taskloop_id == 1){
-        grainsize = taskdata->td_taskwidth;
-    }
-    else grainsize = taskdata->td_taskwidth;
+    grainsize = taskdata->td_taskwidth;
     printf("grainsize set to = %llu\n", grainsize);
     //TODO need to calculate max allowed grainsize here
     //ME2
