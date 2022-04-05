@@ -4372,7 +4372,7 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
     // Previous record exist, calculate a weighted value
     else{
         kmp_perf_p->execution_times[cluster][tasktype][width_index] =
-                (kmp_perf_p->execution_times[cluster][tasktype][width_index] + execution_time) / 2;
+                (4 * kmp_perf_p->execution_times[cluster][tasktype][width_index] + execution_time) / 5;
     }
 }
 
