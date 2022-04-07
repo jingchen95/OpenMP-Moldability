@@ -28,6 +28,10 @@
 #include <linux/unistd.h>
 #include <linux/perf_event.h>
 #include <sched.h>
+#include <sys/types.h>
+#include <pwd.h>
+#include <iostream>
+#include <fstream>
 //ME2
 
 /* #define BUILD_PARALLEL_ORDERED 1 */
@@ -55,6 +59,9 @@
 #endif // BUILD_TIED_TASK_STACK
 
 //ME1
+
+#define TEST_DIFFERNT_WIDTH 1
+#define EXPORT_DATA 1
 
 #define DEBUG_PRINT_ALL 1
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL

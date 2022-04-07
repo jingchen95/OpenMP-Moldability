@@ -4461,6 +4461,9 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
         }
     }
 #endif
+
+
+
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
     kmp_uint8 optimal_cluster;
     kmp_uint8 optimal_cluster_width;
@@ -4471,6 +4474,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     // Get and set task type classification
     if(__kmp_contains_def(task->routine)) task_type = __kmp_get_def(task->routine);
     else task_type = TASK_UNDEFINED;
+
 
     //TODO Debug remove
     ++unique_taskloop_id;
@@ -4549,6 +4553,50 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     //TODO Move this out to its own function, should return the optimal cluster and width instead
     taskdata->td_taskwidth = optimal_cluster_width;
     taskdata->td_cluster = optimal_cluster;
+
+#if TEST_DIFFERNT_WIDTH
+    static int width = 1;
+    taskdata->td_taskwidth = width;
+    width = (width % __kmp_get_team_num_threads(__kmp_get_gtid())) + 1;
+#endif
+
+#if EXPORT_DATA
+    if(unique_taskloop_id == 1000){
+        struct passwd *pw = getpwuid(getuid());
+        std::string homedir = pw->pw_dir;
+        std::cout << homedir << std::endl;
+        std::string filename;
+        switch(task_type){
+            case(TASK_CPU):
+                filename = "CPU.txt";
+                break;
+            case(TASK_CACHE):
+                filename = "CACHE.txt";
+                break;
+            case (TASK_MEMORY):
+                filename = "MEMORY.txt";
+                break;
+            default:
+                return;
+        }
+
+        std::string full = homedir + std::string("/") + filename;
+        std::cout << full << std::endl;
+        std::ofstream myfile (full, std::ios::out | std::ios::app );
+        if (myfile.is_open()){
+            for (int width = 0; width < CLUSTER_SIZE; width++) {
+                int data = kmp_perf_p->execution_times[0][task_type][width];
+                myfile << data;
+                myfile << " ";
+                }
+            myfile << "\n";
+            myfile.close();
+        }
+        else printf("Unable to open file");
+    }
+
+
+#endif
 }
 
 static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid) {
