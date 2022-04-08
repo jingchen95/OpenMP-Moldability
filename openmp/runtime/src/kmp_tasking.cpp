@@ -3343,7 +3343,7 @@ static inline int __kmp_execute_tasks_template(
               std::unique_lock <std::mutex> lk(cv_m);
               //printf("Thread %d going to sleep for %d ms\n", __kmp_tid_from_gtid(gtid),
               //       (1 << thread->th.th_sleep_shift));
-              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 1ms) == std::cv_status::timeout) {
+              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 100us) == std::cv_status::timeout) {
                   //Slept the entire specified duration
                   ++thread->th.th_sleep_shift;
                   if (thread->th.th_sleep_shift > MAX_SLEEP_SHIFT) {
@@ -4635,7 +4635,6 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
                 }
                 // if one thread on other cluster is awake, ignore its idle power
                 idle_power += cluster_awake ? 0 : kmp_sched_p->idle_power[cluster];
-                if (curr_cluster < kmp_sched_p->num_clusters) printf("True\n");
             }
             // Get the running power consumption from the power profiler, depending on frequency etc
             // TODO currently frequency independent, create function that gets the freq and calculates...
@@ -5558,10 +5557,10 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
     //ME1
     taskdata->td_task_type = TASK_PATTERN;
     __kmp_taskloop_mapping(thread, task, tid);
-
-    printf("Task number = %d, Number of tasks recommended = %hhu\n", taskdata->td_task_id, taskdata->td_taskwidth);
+#if DEBUG_PRINT_TASK_INFO
+      printf("Taskloop number = %d, Number of tasks recommended = %hhu\n", taskdata->td_task_id, taskdata->td_taskwidth);
+#endif
     grainsize = taskdata->td_taskwidth;
-    printf("grainsize set to = %llu\n", grainsize);
     //TODO need to calculate max allowed grainsize here
     //ME2
 
