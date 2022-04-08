@@ -1,15 +1,25 @@
 #include <stdio.h>
 #include <omp.h>
+#include <string>
 
 
-int main()
-{
+int main(int argc, char *argv[]){
 
   omp_set_dynamic(0);     // Explicitly disable dynamic teams
-  omp_set_num_threads(8);
+  omp_set_num_threads(4);
   printf("%d\n", omp_get_num_threads());
-  int tasks = 10;
-  int iterations = 8*8;
+  int tasks = 100;
+  int iterations = 100000;
+  
+  
+  if (argc >= 3){
+  
+  	tasks = std::stoi(argv[1]);
+  	iterations = std::stoi(argv[2]); 
+  	
+  }
+  
+  
 #pragma omp parallel
     {
     #pragma omp single
@@ -27,5 +37,6 @@ int main()
 		}
 	}
    }
+   printf("tasks=%d,iterations=%d\n", tasks, iterations);
 }
 
