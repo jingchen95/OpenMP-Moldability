@@ -60,7 +60,7 @@
 
 //ME1
  
-#define TEST_DIFFERNT_WIDTH 0
+#define TEST_DIFFERENT_WIDTH 0
 #define EXPORT_DATA 0
 
 #define DEBUG_PRINT_ALL 0
