@@ -9,7 +9,8 @@ jacobi_input = [100, 500, 1000]
 tests = [["./taskloop", taskloop_input],
          ["./taskloop_jacobi", jacobi_input],
          ["./taskloop_matmul", matmul_input],
-         ["./taskloop_memory", taskloop_input]]
+         ["./taskloop_memory", taskloop_input],
+         ["./taskloop_memory2", taskloop_input]]
 
 
 def run_program(app, iter):
