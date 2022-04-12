@@ -5,12 +5,14 @@ matmul_input = [32, 64, 128, 256]
 memory_input = [10000, 20000, 100000, 200000]
 taskloop_input = [100000, 1000000, 10000000]
 jacobi_input = [100, 500, 1000]
+memcpy_input = [64, 128, 256, 512]
 
 tests = [["./taskloop", taskloop_input],
          ["./taskloop_jacobi", jacobi_input],
          ["./taskloop_matmul", matmul_input],
          ["./taskloop_memory", memory_input],
-         ["./taskloop_memory2", memory_input]]
+         ["./taskloop_memory2", memory_input],
+         ["./taskloop_memcpy", memcpy_input]]
 
 
 def run_program(app, iter):
