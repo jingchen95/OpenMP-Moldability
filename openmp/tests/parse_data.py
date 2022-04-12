@@ -33,7 +33,7 @@ def add_boilerplate(output_file, samples):
     output_file = open(output_file, "w")
 
     output_file.writelines(["\n", "\n"])
-    output_file.write("PARAMETER width\n")
+    output_file.write("PARAMETER  Resource_width\n")
 
     output_file.write("POINTS")
     for i in range(samples):
@@ -46,7 +46,7 @@ def add_boilerplate(output_file, samples):
 def export_data(region, output_file, parsed_data):
     output_file = open(output_file, "a")
     output_file.write("REGION {region}\n".format(region=region))
-    output_file.write("METRIC time\n")
+    output_file.write("METRIC  Execution_time\n")
 
     for entry in parsed_data:
         output_file.write("DATA")
