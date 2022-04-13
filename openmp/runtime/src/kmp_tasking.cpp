@@ -1073,7 +1073,9 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   // If we don't get a valid time, we ignore the history of this task
   // (Defined tasks are less than TASK_UNDEFINED, to keep Pattern tasks out)
   if (finish_time != 0 && taskdata->td_task_type < TASK_UNDEFINED){
-
+#ifdef MEASURE_ACCURACY
+      printf("Measured exec time: %d, predicted exec time: %d\n", finish_time, taskdata->td_predicted_exectime);
+#endif
       __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
                                   finish_time, taskdata->td_taskwidth);
   }
@@ -1610,6 +1612,8 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
     copy_icvs(&taskdata->td_icvs, &taskdata->td_parent->td_icvs);
 
   //ME1
+  taskdata->td_cluster = -1;
+  taskdata->td_taskwidth = 1;
   // debug variable for task ID
   //global_taskcounter += 1;
   //taskdata->td_task_id = global_taskcounter;
@@ -4379,7 +4383,47 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
 
 // Get the execution time for given cluster and task type
 static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint8 width){
+#if INTERPOLATE_PERFORMANCE
+    if (kmp_perf_p->execution_times[cluster][tasktype][width - 1] != 0)
+        return kmp_perf_p->execution_times[cluster][tasktype][width - 1];
+    else{
+        double exec_time = 0, scale = 1, sum = 0;
+        int values = 0;
+        if (tasktype == TASK_CPU){
+            exec_time = 87.35240664962824 + -22.239293769083655 * log2(width);
+            int norm_values[] = {100,60,49,40,34,32,26,24};
+            for (int i = 0; i<CLUSTER_A_SIZE; i++){
+                if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
+
+                values++;
+                sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
+            }
+        } else if (tasktype == TASK_MEMORY){
+            exec_time = 89.65789787240755 + -26.531804044307375 * pow(log2(width), 0.5);
+            int norm_values[] = {100,66,56,51,49,47,46,42};
+            for (int i = 0; i<CLUSTER_A_SIZE; i++){
+                if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
+
+                values++;
+                sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
+            }
+        }else if (tasktype == TASK_CACHE){
+            exec_time = 75.70914797557946 + -13.81904977590176 * log2(width);
+            int norm_values[] = {100,61,48,46,53,43,32,31};
+            for (int i = 0; i<CLUSTER_A_SIZE; i++){
+                if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
+
+                values++;
+                sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
+            }
+        }
+        if (values > 0)
+            scale = sum/values;
+        return exec_time * scale;
+    }
+#else
     return kmp_perf_p->execution_times[cluster][tasktype][width - 1];
+#endif
 }
 
 // Update activity status, status 1 = active, status 0 = sleeping
@@ -4536,8 +4580,13 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                 // Depending on how we store the execution time we may need to change the scale of exec time here
                 kmp_uint32 energy = exec_time * total_power;
 
+                printf("energy = %d\n", energy);
+
                 // If the energy is less than the current minimum, set this as the current minimum
                 if (energy < minimum_energy) {
+#if MEASURE_ACCURACY
+                    taskdata->td_predicted_exectime = exec_time;
+#endif
                     optimal_cluster = curr_cluster;
                     minimum_energy = energy;
                     optimal_cluster_width = cluster_width;
@@ -4552,6 +4601,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
         optimal_cluster = 1;
         optimal_cluster_width = 1;
     }
+    printf("optimal_cluster_width = %d\n", optimal_cluster_width);
     //TODO Move this out to its own function, should return the optimal cluster and width instead
     taskdata->td_taskwidth = optimal_cluster_width;
     taskdata->td_cluster = optimal_cluster;
@@ -4652,8 +4702,12 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
             // Depending on how we store the execution time we may need to change the scale of exec time here
             kmp_uint32 energy = exec_time * total_power;
 
+
             // If the energy is less than the current minimum, set this as the current minimum
             if (energy < minimum_energy) {
+#if MEASURE_ACCURACY
+                taskdata->td_predicted_exectime = exec_time;
+#endif
                 optimal_cluster = curr_cluster;
                 minimum_energy = energy;
             }
