@@ -3343,7 +3343,7 @@ static inline int __kmp_execute_tasks_template(
               std::unique_lock <std::mutex> lk(cv_m);
               //printf("Thread %d going to sleep for %d ms\n", __kmp_tid_from_gtid(gtid),
               //       (1 << thread->th.th_sleep_shift));
-              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 100us) == std::cv_status::timeout) {
+              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 10us) == std::cv_status::timeout) {
                   //Slept the entire specified duration
                   ++thread->th.th_sleep_shift;
                   if (thread->th.th_sleep_shift > MAX_SLEEP_SHIFT) {
@@ -4288,7 +4288,7 @@ release_and_exit:
 static void __kmp_perf_open(kmp_info_t *thread){
     // TODO may want to change the result of counter openings to a bool and return it
     // Never failed to open so far tho
-
+    //if(thread->th.th_counters_active) return;
     // These may be unnecessary
     thread->th.th_counter_cycles = 0;
     thread->th.th_counter_instructions = 0;
@@ -4312,6 +4312,7 @@ static void __kmp_perf_open(kmp_info_t *thread){
 
 // Closes the perf counters
 static void __kmp_perf_close(kmp_info_t *thread){
+    //return;
     close(thread->th.th_counter_cycles);
     close(thread->th.th_counter_cachemiss);
     close(thread->th.th_counter_instructions);
@@ -4445,7 +4446,7 @@ static kmp_uint8 __kmp_schedule_thread(kmp_info_t *thread, kmp_uint8 cluster, km
 int unique_taskloop_id = 0;
 
 // Task mapping algorithm for taskloop constructs
-static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid){
+static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid, kmp_uint64 max_split){
     //debug
 #if DEBUG_PRINT_PERFORMANCE_MODEL_INFO
     if (global_taskcounter){
@@ -4461,8 +4462,6 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
         }
     }
 #endif
-
-
 
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
     kmp_uint8 optimal_cluster;
@@ -4485,8 +4484,11 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
         // TODO For each execution place (cluster...) should be randomly selected
         for (kmp_int32 curr_cluster = 0; curr_cluster < kmp_sched_p->num_clusters; curr_cluster++) {
 
-            // Max width for curr_cluster...
-            kmp_uint8 cluster_width_max = kmp_sched_p->cluster_tid_entries[curr_cluster] + 1;
+            // Max allowed width for current task depending on cluster size and taskloop size
+            kmp_uint8 cluster_width_max = (kmp_sched_p->cluster_tid_entries[curr_cluster]) < max_split ?
+                                          kmp_sched_p->cluster_tid_entries[curr_cluster] : max_split;
+
+            ++cluster_width_max;
             for(kmp_int32 cluster_width = 1; cluster_width < cluster_width_max; cluster_width++) {
 
                 // the idle power consumption is shared between current cluster and the idle clusters.
@@ -4554,10 +4556,13 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     taskdata->td_taskwidth = optimal_cluster_width;
     taskdata->td_cluster = optimal_cluster;
 
-#if TEST_DIFFERNT_WIDTH
+#if TEST_DIFFERENT_WIDTH
     static int width = 1;
+    static int width_it = 0;
     taskdata->td_taskwidth = width;
-    width = (width % __kmp_get_team_num_threads(__kmp_get_gtid())) + 1;
+    width_it = width_it % ((__kmp_get_team_num_threads(__kmp_get_gtid())  * 100) - 1) + 1;
+    width = (width_it / 100) + 1;
+    //printf("Current width iteration = %d, Suggested width = %d\n", width_it, width);
 #endif
 
 #if EXPORT_DATA
@@ -5556,7 +5561,7 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
 
     //ME1
     taskdata->td_task_type = TASK_PATTERN;
-    __kmp_taskloop_mapping(thread, task, tid);
+    __kmp_taskloop_mapping(thread, task, tid, tc + 1);
 #if DEBUG_PRINT_TASK_INFO
       printf("Taskloop number = %d, Number of tasks recommended = %hhu\n", taskdata->td_task_id, taskdata->td_taskwidth);
 #endif
