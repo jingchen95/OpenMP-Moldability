@@ -32,6 +32,7 @@
 #include <pwd.h>
 #include <iostream>
 #include <fstream>
+#include <math.h>
 //ME2
 
 /* #define BUILD_PARALLEL_ORDERED 1 */
@@ -60,8 +61,12 @@
 
 //ME1
  
-#define TEST_DIFFERENT_WIDTH 1
-#define EXPORT_DATA 1
+#define TEST_DIFFERENT_WIDTH 0
+#define EXPORT_DATA 0
+#define MEASURE_ACCURACY 0
+
+#define INTERPOLATE_PERFORMANCE 0
+#define INTERPOLATE_POLY 0
 
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
@@ -2600,9 +2605,11 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   //ME1
   kmp_uint32 td_unique_tid;
   kmp_uint8 td_taskwidth = 1;
-  kmp_int8 td_cluster = -1;
+  kmp_int8 td_cluster;
   kmp_uint8 td_task_type;
-
+#ifdef MEASURE_ACCURACY
+  kmp_uint32 td_predicted_exectime;
+#endif
   kmp_real64 td_starttime; // Stores the current task segment start time.
   kmp_real64 td_previous_exectime; // Stores previous execution time of task if it has been interrupted.
   //PERF related variables

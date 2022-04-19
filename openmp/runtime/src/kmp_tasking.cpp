@@ -1074,6 +1074,24 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   // (Defined tasks are less than TASK_UNDEFINED, to keep Pattern tasks out)
   if (finish_time != 0 && taskdata->td_task_type < TASK_UNDEFINED){
 #ifdef MEASURE_ACCURACY
+      {
+          static std::mutex mutex;
+          std::lock_guard<std::mutex> lock(mutex);
+          struct passwd *pw = getpwuid(getuid());
+          std::string homedir = pw->pw_dir;
+          std::string filename = "accuracy_data.txt";
+          std::string full = homedir + std::string("/") + filename;
+          std::ofstream myfile (full, std::ios::out | std::ios::app );
+          if (myfile.is_open()){
+              myfile << finish_time << " " << taskdata->td_predicted_exectime <<
+                    " " << int (taskdata->td_taskwidth) << std::endl;
+              myfile.close();
+          }
+          else printf("Unable to open file");
+
+
+
+      }
       printf("Measured exec time: %d, predicted exec time: %d\n", finish_time, taskdata->td_predicted_exectime);
 #endif
       __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type,
@@ -4390,8 +4408,14 @@ static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 taskt
         double exec_time = 0, scale = 1, sum = 0;
         int values = 0;
         if (tasktype == TASK_CPU){
+#if INTERPOLATE_POLY
+            exec_time = -0.4318*pow(width, 3) + 7.574*pow(width, 2) - 46.45 * width + 129.7;
+            int norm_values[] = {92,60,48,39,33,31,25,23};
+#else
             exec_time = 87.35240664962824 + -22.239293769083655 * log2(width);
             int norm_values[] = {100,60,49,40,34,32,26,24};
+#endif
+
             for (int i = 0; i<CLUSTER_A_SIZE; i++){
                 if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
 
@@ -4399,8 +4423,13 @@ static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 taskt
                 sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
             }
         } else if (tasktype == TASK_MEMORY){
+#if INTERPOLATE_POLY
+            exec_time = -0.3788*pow(width, 3) + 6.447 *pow(width, 2) - 36.89 * width + 118.2;
+            int norm_values[] = {88,66,55,51,48,46,46,42};
+#else
             exec_time = 89.65789787240755 + -26.531804044307375 * pow(log2(width), 0.5);
             int norm_values[] = {100,66,56,51,49,47,46,42};
+#endif
             for (int i = 0; i<CLUSTER_A_SIZE; i++){
                 if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
 
@@ -4408,8 +4437,13 @@ static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 taskt
                 sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
             }
         }else if (tasktype == TASK_CACHE){
+#if INTERPOLATE_POLY
+            exec_time = -0.4242*pow(width, 3) + 6.18 *pow(width, 2) - 31.4  * width + 100.9;
+            int norm_values[] = {76,60,47,46,53,43,32,31};
+#else
             exec_time = 75.70914797557946 + -13.81904977590176 * log2(width);
             int norm_values[] = {100,61,48,46,53,43,32,31};
+#endif
             for (int i = 0; i<CLUSTER_A_SIZE; i++){
                 if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
 
@@ -4619,7 +4653,6 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     if(unique_taskloop_id == 1000){
         struct passwd *pw = getpwuid(getuid());
         std::string homedir = pw->pw_dir;
-        std::cout << homedir << std::endl;
         std::string filename;
         switch(task_type){
             case(TASK_CPU):
