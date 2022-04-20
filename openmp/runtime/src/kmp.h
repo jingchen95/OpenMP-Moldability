@@ -33,6 +33,8 @@
 #include <iostream>
 #include <fstream>
 #include <math.h>
+#include <errno.h>
+#include <string.h>
 //ME2
 
 /* #define BUILD_PARALLEL_ORDERED 1 */

@@ -1630,7 +1630,7 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
     copy_icvs(&taskdata->td_icvs, &taskdata->td_parent->td_icvs);
 
   //ME1
-  taskdata->td_cluster = -1;
+  taskdata->td_cluster = 10;
   taskdata->td_taskwidth = 1;
   // debug variable for task ID
   //global_taskcounter += 1;
@@ -4319,15 +4319,24 @@ static void __kmp_perf_open(kmp_info_t *thread){
     // Open the counters
     thread->th.th_counter_cycles = perf_event_open(&thread->th.perf_attr[0], 0
                                                    , thread->th.th_cpu, -1, 0);
-    if (thread->th.th_counter_cycles < 0) printf("Failed to open counter for cycles\n");
+    if (thread->th.th_counter_cycles < 0) {
+        printf("Failed to open counter for cycles\n");
+        printf("Error for cycles: %s\n", strerror(errno));
+    }
 
     thread->th.th_counter_instructions = perf_event_open(&thread->th.perf_attr[1], 0,
                                                          thread->th.th_cpu, -1, 0);
-    if (thread->th.th_counter_instructions < 0) printf("Failed to open counter for instructions\n");
+    if (thread->th.th_counter_instructions < 0) {
+        printf("Failed to open counter for instructions\n");
+        printf("Error for instructions: %s\n", strerror(errno));
+    }
 
     thread->th.th_counter_cachemiss = perf_event_open(&thread->th.perf_attr[2], 0,
                                                       thread->th.th_cpu, -1, 0);
-    if (thread->th.th_counter_cachemiss < 0) printf("Failed to open counter for cache misses\n");
+    if (thread->th.th_counter_cachemiss < 0) {
+        printf("Failed to open counter for cache misses\n");
+        printf("Error for cache: %s\n", strerror(errno));
+    }
 
     thread->th.th_counters_active = 1;
 }
@@ -4795,7 +4804,7 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   // If the task has run before, get the task type
 
     kmp_int32 tid_sched;
-    if(taskdata->td_cluster == -1){
+    if(taskdata->td_cluster == 10){
       // Task mapping algorithm, returns the tid of preferable thread to schedule
       tid_sched = __kmp_task_mapping(thread, task, tid);
   }
