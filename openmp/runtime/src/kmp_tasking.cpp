@@ -55,9 +55,9 @@ static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 taskt
 static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uint8 status);
 static void __kmp_scheduler_init(kmp_info_t *thread);
 static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid);
-static void __kmp_perf_open(kmp_info_t *thread);
-static void __kmp_perf_close(kmp_info_t *thread);
-static void __kmp_init_counters(kmp_info_t *thread);
+static void __kmp_perf_enable(kmp_info_t *thread);
+static void __kmp_perf_disable(kmp_info_t *thread);
+static void __kmp_perf_init_counters(kmp_info_t *thread);
 //static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid);
 //ME2
 
@@ -621,7 +621,7 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   // store away the execution time of current task before starting on the new one
 
   // If counters aren't init, do so
-  if (thread->th.th_perf_init_flag == 0) __kmp_init_counters(thread);
+  if (thread->th.th_perf_init_flag == 0) __kmp_perf_init_counters(thread);
 
   kmp_real64 current_time = 0;
   __kmp_read_system_time(&current_time);
@@ -649,7 +649,7 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
       // Get value
 
       // Start the counters if not active
-      if (thread->th.th_counters_active == 0) __kmp_perf_open(thread);
+      if (thread->th.th_counters_active == 0) __kmp_perf_enable(thread);
 
       // If active, increment the number of tasks currently using them
       // TODO this may cause trouble if task migrates between threads.... removed for now
@@ -1026,7 +1026,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       // Close the counters since were not using them anymore
       //TODO check if resumed task is undefined, then keep them open..
       //TODO may cause problems if there is no resumed task?
-      __kmp_perf_close(thread);
+      __kmp_perf_disable(thread);
 
 
 #if DEBUG_PRINT_TASK_INFO
@@ -1259,7 +1259,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       kmp_uint64 current_instructions = 0;
       kmp_uint64 current_cachemiss = 0;
       // Open the counters if not active
-      if (!thread->th.th_counters_active) __kmp_perf_open(thread);
+      if (!thread->th.th_counters_active) __kmp_perf_enable(thread);
       // Read from counters
       read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
       read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
@@ -3192,31 +3192,50 @@ uint64_t perf_event_open(struct perf_event_attr * hw,
     return syscall(__NR_perf_event_open, hw, pid, cpu, grp, flags);
 }
 
-static void __kmp_init_counters(kmp_info_t *thread){
-    //kmp_int32 pid = getpid();
+// Initiate and starts the perf counters
+static void __kmp_perf_init_counters(kmp_info_t *thread){
+
     kmp_int32 tid = __kmp_get_tid();
     thread->th.th_cpu = sched_getcpu();
+
     // TODO Fix cluster initialisation here, currently hardcoded
     thread->th.th_cluster = CLUSTER_A;
     // add your tid and cluster to the scheduler
     thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
-
+    
     #if DEBUG_PRINT_THREAD_INFO
     printf("TID = %d, GTID = %d, CPU = %u \n", tid, __kmp_get_gtid(), thread->th.th_cpu);
     #endif
-    // Initializes the perf counter attributes.
-    for (int i = 0; i < 3; i++) {
-        thread->th.perf_attr[i].type = PERF_TYPE_HARDWARE;
-        thread->th.perf_attr[i].disabled = 0;
-        thread->th.perf_attr[i].exclude_kernel = 1;
-        thread->th.perf_attr[i].exclude_hv = 1;
-        thread->th.perf_attr[i].exclude_idle = 1;
-    }
-    thread->th.perf_attr[0].config = PERF_COUNT_HW_REF_CPU_CYCLES;
-    thread->th.perf_attr[1].config = PERF_COUNT_HW_INSTRUCTIONS;
-    thread->th.perf_attr[2].config = PERF_COUNT_HW_CACHE_MISSES;
 
+    thread->th.th_counters_active = 1;
     thread->th.th_perf_init_flag = 1;
+
+    // Perf config structure
+    struct perf_event_attr pe;
+    
+    //TODO test if this is necessary
+    memset(&pe, 0, sizeof(struct perf_event_attr));
+
+    pe.type = PERF_TYPE_HARDWARE;
+    pe.size = sizeof(struct perf_event_attr);
+    pe.config = PERF_COUNT_HW_INSTRUCTIONS;
+    pe.disabled = 0;
+    pe.exclude_kernel = 1;
+    pe.exclude_hv = 1;
+
+    // Systemcall to open perf counters
+    thread->th.th_counter_instructions = perf_event_open(&pe, 0, thread->th.th_cpu, -1, 0);
+    if(thread->th.th_counter_instructions < 0) printf("Failed instructions\n");
+
+    pe.config = PERF_COUNT_HW_CPU_CYCLES;
+    thread->th.th_counter_cycles = perf_event_open(&pe, 0, thread->th.th_cpu, -1, 0);
+    if(thread->th.th_counter_cycles < 0) printf("Failed cycles\n");
+
+    pe.config = PERF_COUNT_HW_CACHE_MISSES;
+    thread->th.th_counter_cachemiss = perf_event_open(&pe, 0, thread->th.th_cpu, -1, 0);
+    if(thread->th.th_counter_cachemiss < 0) printf("Failed cache misses\n");
+
+    return;
 }
 
 
@@ -3276,7 +3295,7 @@ static inline int __kmp_execute_tasks_template(
   KMP_DEBUG_ASSERT(*unfinished_threads >= 0);
 
   //ME1
-  if (thread->th.th_perf_init_flag == 0) __kmp_init_counters(thread);
+  if (thread->th.th_perf_init_flag == 0) __kmp_perf_init_counters(thread);
   //ME2
 
   while (1) { // Outer loop keeps trying to find tasks in case of single thread
@@ -4306,49 +4325,31 @@ release_and_exit:
 }
 
 //ME1
-// Enables perf counters
-static void __kmp_perf_open(kmp_info_t *thread){
-    // TODO may want to change the result of counter openings to a bool and return it
-    // Never failed to open so far tho
-    //if(thread->th.th_counters_active) return;
-    // These may be unnecessary
-    thread->th.th_counter_cycles = 0;
-    thread->th.th_counter_instructions = 0;
-    thread->th.th_counter_cachemiss = 0;
+// Enables and resets perf counters
+static void __kmp_perf_enable(kmp_info_t *thread){
 
-    // Open the counters
-    thread->th.th_counter_cycles = perf_event_open(&thread->th.perf_attr[0], 0
-                                                   , thread->th.th_cpu, -1, 0);
-    if (thread->th.th_counter_cycles < 0) {
-        printf("Failed to open counter for cycles\n");
-        printf("Error for cycles: %s\n", strerror(errno));
-    }
+    ioctl(thread->th.th_counter_cycles, PERF_EVENT_IOC_RESET, 0);
+    ioctl(thread->th.th_counter_cycles, PERF_EVENT_IOC_ENABLE, 0);
 
-    thread->th.th_counter_instructions = perf_event_open(&thread->th.perf_attr[1], 0,
-                                                         thread->th.th_cpu, -1, 0);
-    if (thread->th.th_counter_instructions < 0) {
-        printf("Failed to open counter for instructions\n");
-        printf("Error for instructions: %s\n", strerror(errno));
-    }
+    ioctl(thread->th.th_counter_instructions, PERF_EVENT_IOC_RESET, 0);
+    ioctl(thread->th.th_counter_instructions, PERF_EVENT_IOC_ENABLE, 0);
 
-    thread->th.th_counter_cachemiss = perf_event_open(&thread->th.perf_attr[2], 0,
-                                                      thread->th.th_cpu, -1, 0);
-    if (thread->th.th_counter_cachemiss < 0) {
-        printf("Failed to open counter for cache misses\n");
-        printf("Error for cache: %s\n", strerror(errno));
-    }
+    ioctl(thread->th.th_counter_cachemiss, PERF_EVENT_IOC_RESET, 0);
+    ioctl(thread->th.th_counter_cachemiss, PERF_EVENT_IOC_ENABLE, 0);
 
     thread->th.th_counters_active = 1;
+    return;
 }
 
-// Closes the perf counters
-static void __kmp_perf_close(kmp_info_t *thread){
-    //return;
-    close(thread->th.th_counter_cycles);
-    close(thread->th.th_counter_cachemiss);
-    close(thread->th.th_counter_instructions);
+// Disables the perf counters
+static void __kmp_perf_disable(kmp_info_t *thread){
+    // 
+    ioctl(thread->th.th_counter_cycles, PERF_EVENT_IOC_DISABLE, 0);
+    ioctl(thread->th.th_counter_cachemiss, PERF_EVENT_IOC_DISABLE, 0);
+    ioctl(thread->th.th_counter_instructions, PERF_EVENT_IOC_DISABLE, 0);
 
     thread->th.th_counters_active = 0;
+    return;
 }
 
 // Initialized the performance model struct

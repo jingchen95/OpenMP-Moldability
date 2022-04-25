@@ -35,6 +35,7 @@
 #include <math.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/ioctl.h> //Used to control the perf counters
 //ME2
 
 /* #define BUILD_PARALLEL_ORDERED 1 */
@@ -72,7 +73,7 @@
 
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
-#define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASK_INFO 1 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
 
 #define MAX_STEAL_ATTEMPTS 5
@@ -2852,12 +2853,11 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   //ME1
   kmp_uint8 th_cpu; // cpu identifier
   //PERF
-  kmp_uint8 th_counters_active = 0; // Currently used as a flag to indicate if counters are active
+  kmp_uint8 th_counters_active = 0; // Flag to indicate if counters are active
   kmp_uint8 th_perf_init_flag = 0;
   kmp_int32 th_counter_cycles;
   kmp_int32 th_counter_instructions;
   kmp_int32 th_counter_cachemiss;
-  perf_event_attr perf_attr[3]; // Used for the perf counters
 
   // TODO cluster currently hardcoded, fix for use with more then one cluster
   // TODO Probably a better idea to store a hashmap with these variables instead of sticking them to the thread struct
