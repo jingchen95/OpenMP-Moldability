@@ -1073,7 +1073,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   // If we don't get a valid time, we ignore the history of this task
   // (Defined tasks are less than TASK_UNDEFINED, to keep Pattern tasks out)
   if (finish_time != 0 && taskdata->td_task_type < TASK_UNDEFINED){
-#ifdef MEASURE_ACCURACY
+#if MEASURE_ACCURACY
       {
           static std::mutex mutex;
           std::lock_guard<std::mutex> lock(mutex);
@@ -1630,7 +1630,7 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
     copy_icvs(&taskdata->td_icvs, &taskdata->td_parent->td_icvs);
 
   //ME1
-  taskdata->td_cluster = 10;
+  taskdata->td_cluster = CLUSTER_UNASSIGNED;
   taskdata->td_taskwidth = 1;
   // debug variable for task ID
   //global_taskcounter += 1;
@@ -4624,7 +4624,6 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                 // Depending on how we store the execution time we may need to change the scale of exec time here
                 kmp_uint32 energy = exec_time * total_power;
 
-                printf("energy = %d\n", energy);
 
                 // If the energy is less than the current minimum, set this as the current minimum
                 if (energy < minimum_energy) {
@@ -4805,7 +4804,7 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   // If the task has run before, get the task type
 
     kmp_int32 tid_sched;
-    if(taskdata->td_cluster == 10){
+  if(taskdata->td_cluster == CLUSTER_UNASSIGNED){
       // Task mapping algorithm, returns the tid of preferable thread to schedule
       tid_sched = __kmp_task_mapping(thread, task, tid);
   }

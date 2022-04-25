@@ -1288,12 +1288,15 @@ void KMPAffinity::pick_api() {
 #if KMP_USE_HWLOC
   // Only use Hwloc if affinity isn't explicitly disabled and
   // user requests Hwloc topology method
+
   if (__kmp_affinity_top_method == affinity_top_method_hwloc &&
       __kmp_affinity_type != affinity_disabled) {
     affinity_dispatch = new KMPHwlocAffinity();
+    printf("Picked hwloc\n");
   } else
 #endif
   {
+    printf("Didn't pick hwloc\n");
     affinity_dispatch = new KMPNativeAffinity();
   }
   __kmp_affinity_dispatch = affinity_dispatch;
@@ -4194,6 +4197,7 @@ static void __kmp_aux_affinity_initialize(void) {
 // which might have been implicitly set.
 #if KMP_USE_HWLOC
   else if (__kmp_affinity_top_method == affinity_top_method_hwloc) {
+    printf("Using hwloc\n");
     KMP_ASSERT(__kmp_affinity_dispatch->get_api_type() == KMPAffinity::HWLOC);
     success = __kmp_affinity_create_hwloc_map(&msg_id);
     if (!success) {
@@ -4432,6 +4436,10 @@ static void __kmp_aux_affinity_initialize(void) {
     } else {
       __kmp_affinity_num_masks = numUnique;
     }
+    //ME1
+    //#if TX2
+    //__kmp_affinity_num_masks = 6;
+    //#endif
 
     if ((__kmp_nested_proc_bind.bind_types[0] != proc_bind_intel) &&
         (__kmp_affinity_num_places > 0) &&
@@ -4677,6 +4685,13 @@ void __kmp_affinity_set_place(int gtid) {
   KMP_CPU_COPY(th->th.th_affin_mask, mask);
   th->th.th_current_place = th->th.th_new_place;
 
+  //ME1
+  #if TX2
+  th->th.th_affin_mask->zero();
+  th->th.th_affin_mask->set(__kmp_get_tid());
+  #endif
+  //ME2
+
   if (__kmp_affinity_verbose) {
     char buf[KMP_AFFIN_MASK_PRINT_LEN];
     __kmp_affinity_print_mask(buf, KMP_AFFIN_MASK_PRINT_LEN,
@@ -4684,6 +4699,7 @@ void __kmp_affinity_set_place(int gtid) {
     KMP_INFORM(BoundToOSProcSet, "OMP_PROC_BIND", (kmp_int32)getpid(),
                __kmp_gettid(), gtid, buf);
   }
+
   __kmp_set_system_affinity(th->th.th_affin_mask, TRUE);
 }
 

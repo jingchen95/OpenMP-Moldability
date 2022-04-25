@@ -63,6 +63,8 @@
 #endif // BUILD_TIED_TASK_STACK
 
 //ME1
+
+#define TX2 1
  
 #define TEST_DIFFERENT_WIDTH 0
 #define EXPORT_DATA 0
@@ -73,7 +75,7 @@
 
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
-#define DEBUG_PRINT_TASK_INFO 1 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
 
 #define MAX_STEAL_ATTEMPTS 5
@@ -93,6 +95,8 @@
 #define CLUSTER_B 1
 
 #define FLOPS_PER_CYCLE 30 // Must be set per machine
+
+#define CLUSTER_UNASSIGNED CLUSTER_AMOUNT+1
 
 // AI values to categories task types, in the scale of AI*100
 #define AI_CPU_LIMIT 1150 // Everything above this value is set as a CPU task
