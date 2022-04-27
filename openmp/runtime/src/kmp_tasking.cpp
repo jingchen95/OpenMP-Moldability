@@ -55,8 +55,10 @@ static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 taskt
 static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uint8 status);
 static void __kmp_scheduler_init(kmp_info_t *thread);
 static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid);
+#if PERF_DYNAMIC_ON
 static void __kmp_perf_enable(kmp_info_t *thread);
 static void __kmp_perf_disable(kmp_info_t *thread);
+#endif
 static void __kmp_perf_init_counters(kmp_info_t *thread);
 //static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid);
 //ME2
@@ -648,8 +650,10 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
       // PERF
       // Get value
 
+      #if PERF_DYNAMIC_ON
       // Start the counters if not active
       if (thread->th.th_counters_active == 0) __kmp_perf_enable(thread);
+      #endif
 
       // If active, increment the number of tasks currently using them
       // TODO this may cause trouble if task migrates between threads.... removed for now
@@ -1008,7 +1012,12 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   current_time = (current_time - taskdata->td_starttime + taskdata->td_previous_exectime) * 1000000;
   kmp_uint32 finish_time = static_cast<kmp_uint32>(current_time);
 
+#if PERF_DYNAMIC_ON
+  if (taskdata->td_task_type == TASK_UNDEFINED) {
+#else
   if (taskdata->td_task_type == TASK_UNDEFINED && thread->th.th_counters_active) {
+#endif
+
       //PERF
       kmp_uint64 current_cycles = 0;
       kmp_uint64 current_instructions = 0;
@@ -1022,12 +1031,14 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       kmp_uint64 instructions_finish =
               current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
       kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
-
+      
+      #if PERF_DYNAMIC_ON
       // Close the counters since were not using them anymore
       //TODO check if resumed task is undefined, then keep them open..
       //TODO may cause problems if there is no resumed task?
       __kmp_perf_disable(thread);
-
+      #endif
+  
 
 #if DEBUG_PRINT_TASK_INFO
       // Debug print
@@ -1258,8 +1269,12 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       kmp_uint64 current_cycles = 0;
       kmp_uint64 current_instructions = 0;
       kmp_uint64 current_cachemiss = 0;
+
+      #if PERF_DYNAMIC_ON
       // Open the counters if not active
       if (!thread->th.th_counters_active) __kmp_perf_enable(thread);
+      #endif
+
       // Read from counters
       read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
       read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
@@ -3199,7 +3214,8 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     thread->th.th_cpu = sched_getcpu();
 
     // TODO Fix cluster initialisation here, currently hardcoded
-    thread->th.th_cluster = CLUSTER_A;
+    if(thread->th.th_cpu == 1 || thread->th.th_cpu == 2) thread->th.th_cluster = CLUSTER_B;
+    else thread->th.th_cluster = CLUSTER_A;
     // add your tid and cluster to the scheduler
     thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
     
@@ -4325,6 +4341,7 @@ release_and_exit:
 }
 
 //ME1
+#if PERF_DYNAMIC_ON
 // Enables and resets perf counters
 static void __kmp_perf_enable(kmp_info_t *thread){
 
@@ -4351,6 +4368,7 @@ static void __kmp_perf_disable(kmp_info_t *thread){
     thread->th.th_counters_active = 0;
     return;
 }
+#endif
 
 // Initialized the performance model struct
 static void __kmp_performance_model_init(){
@@ -4479,25 +4497,27 @@ static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uin
 static void __kmp_scheduler_init(kmp_info_t *thread){
 
     kmp_sched_p->idle_power[CLUSTER_A] = CLUSTER_A_POWER_IDLE;
+    /*
     kmp_sched_p->runtime_power[CLUSTER_A][TASK_CPU][LOW_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CPU_LOW;
     kmp_sched_p->runtime_power[CLUSTER_A][TASK_CPU][HIGH_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CPU_HIGH;
     kmp_sched_p->runtime_power[CLUSTER_A][TASK_CACHE][LOW_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CACHE_LOW;
     kmp_sched_p->runtime_power[CLUSTER_A][TASK_CACHE][HIGH_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CACHE_HIGH;
     kmp_sched_p->runtime_power[CLUSTER_A][TASK_MEMORY][LOW_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_MEMORY_LOW;
     kmp_sched_p->runtime_power[CLUSTER_A][TASK_MEMORY][HIGH_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_MEMORY_HIGH;
-
+    */
     // TODO FIX proper init for systems utilizing more then one cluster
-    /* Creates warnings from the compiler
+  //Creates warnings from the compiler
 #ifdef CLUSTER_B_ACTIVE
     kmp_sched_p->idle_power[CLUSTER_B] = CLUSTER_A_POWER_IDLE;
+    /*
     kmp_sched_p->runtime_power[CLUSTER_B][TASK_CPU][LOW_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CPU_LOW;
     kmp_sched_p->runtime_power[CLUSTER_B][TASK_CPU][HIGH_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CPU_HIGH;
     kmp_sched_p->runtime_power[CLUSTER_B][TASK_CACHE][LOW_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CACHE_LOW;
     kmp_sched_p->runtime_power[CLUSTER_B][TASK_CACHE][HIGH_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CACHE_HIGH;
     kmp_sched_p->runtime_power[CLUSTER_B][TASK_MEMORY][LOW_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_MEMORY_LOW;
     kmp_sched_p->runtime_power[CLUSTER_B][TASK_MEMORY][HIGH_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_MEMORY_HIGH;
+    */
 #endif
-     */
 }
 
 // Adds the calling threads cluster and tid to the scheduler
@@ -4536,18 +4556,35 @@ int unique_taskloop_id = 0;
 // Task mapping algorithm for taskloop constructs
 static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid, kmp_uint64 max_split){
     //debug
-#if DEBUG_PRINT_PERFORMANCE_MODEL_INFO
+#if DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO
     if (global_taskcounter){
-        printf("Performance model update after %d tasks\nExecution times : CPU | CACHE | MEMORY\n",
+        printf("Performance model update after %d tasks\nExecution times:  | CPU | CACHE | MEMORY\n",
                global_taskcounter);
         for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
             for (int width = 0; width < CLUSTER_SIZE; width++) {
-                printf("                | %d  | %d    | %d\n",
+                printf("cluster %d width %d | %d  | %d    | %d\n",
+                       cluster, width+1,
                        kmp_perf_p->execution_times[cluster][TASK_CPU][width],
                        kmp_perf_p->execution_times[cluster][TASK_CACHE][width],
                        kmp_perf_p->execution_times[cluster][TASK_MEMORY][width]);
             }
         }
+    }
+#endif
+
+#if DEBUG_PRINT_POWER_VALUES
+    static int test = 0;
+    test++;
+    if(test == 1){
+      for(int i = 0; i < CLUSTER_AMOUNT; i++){
+          for(int j = 0; j < TASK_TYPES; j++){
+            for(int k = 0; k < CLUSTER_POWER_RUNTIME_SAMPLES; k++){
+              for(int l = 0; l < CLUSTER_SIZE; l++){
+                printf("cluster = %d, Tasktype = %d, Frequency = %d, Width = %d, Energy = %d\n", i, j, k, l+1, kmp_sched_p->runtime_power[i][j][k][l]);
+              }
+            }
+          }
+      }
     }
 #endif
 
@@ -4615,7 +4652,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                 // TODO currently frequency independent, create function that gets the freq and calculates...
                 // Need the frequency for the performance model also
                 kmp_uint32 total_power =
-                        idle_power + kmp_sched_p->runtime_power[curr_cluster][task_type][0];
+                        idle_power + kmp_sched_p->runtime_power[curr_cluster][task_type][HIGH_FREQ_POWER][cluster_width - 1];
 
                 // Get the execution time from the performance model
                 kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster,
@@ -4644,7 +4681,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
         optimal_cluster = 1;
         optimal_cluster_width = 1;
     }
-    printf("optimal_cluster_width = %d\n", optimal_cluster_width);
+    //printf("optimal_cluster_width = %d\n", optimal_cluster_width);
     //TODO Move this out to its own function, should return the optimal cluster and width instead
     taskdata->td_taskwidth = optimal_cluster_width;
     taskdata->td_cluster = optimal_cluster;
@@ -4698,8 +4735,8 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
 
 static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid) {
     //debug
-#if DEBUG_PRINT_PERFORMANCE_MODEL_INFO
-    if (global_taskcounter % 10 == 1){
+#if DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO
+    if (global_taskcounter % 10 == 0){
         printf("Performance model update after %d tasks\nExecution times : CPU | CACHE | MEMORY\n",
                global_taskcounter);
         for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
@@ -4736,7 +4773,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
             // Get the running power consumption from the power profiler, depending on frequency etc
             // TODO currently frequency independent, create function that gets the freq and calculates...
             // Need the frequency for the performance model also
-            kmp_uint32 total_power = idle_power + kmp_sched_p->runtime_power[curr_cluster][taskdata->td_task_type][0];
+            kmp_uint32 total_power = idle_power + kmp_sched_p->runtime_power[curr_cluster][taskdata->td_task_type][HIGH_FREQ_POWER][0];
 
             // Get the execution time from the performance model
             kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster, taskdata->td_task_type, 1);
@@ -4759,7 +4796,6 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
         // TODO If tasktype is unknown, select fastest? cluster for identification
         optimal_cluster = CLUSTER_A;
     }
-
     // We now have the optimal cluster
     // schedule task on optimal thread right now picks the first sleeping thread it finds
     // If unable to find a sleeping thread, schedule task on yourself
@@ -5619,7 +5655,7 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
 
 //ME1
   kmp_int32 tid = __kmp_tid_from_gtid(gtid);
-#if DEBUG_PRINT_TASK_INFO
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
   printf("lowerbound = %llu\nupperbound = %llu\nnum_tasks_min = %llu\ngrainsize = %llu\ntc = %llu\n"
          , lower, upper, num_tasks_min, grainsize, tc);
 #endif
@@ -5658,7 +5694,7 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
     //ME1
     taskdata->td_task_type = TASK_PATTERN;
     __kmp_taskloop_mapping(thread, task, tid, tc + 1);
-#if DEBUG_PRINT_TASK_INFO
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
       printf("Taskloop number = %d, Number of tasks recommended = %hhu\n", taskdata->td_task_id, taskdata->td_taskwidth);
 #endif
     grainsize = taskdata->td_taskwidth;

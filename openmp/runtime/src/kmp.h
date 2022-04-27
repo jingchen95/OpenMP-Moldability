@@ -75,26 +75,30 @@
 
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
-#define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
-#define DEBUG_PRINT_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASK_INFO 1 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 1
+#define DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO 0
+#define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0
+#define DEBUG_PRINT_POWER_VALUES 0
+
+#define PERF_DYNAMIC_ON 0
 
 #define MAX_STEAL_ATTEMPTS 5
 #define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
-// Assumes CLUSTER_A_SIZE is bigger than CLUSTER_B_SIZE
-#define CLUSTER_AMOUNT 1 // Number of clusters
-#define CLUSTER_B_ACTIVE 0
-#define CLUSTER_A_SIZE 8 // threads on cluster A
-#define CLUSTER_B_SIZE 0 // threads on cluster B
+#define CLUSTER_AMOUNT 2 // Number of clusters
+#define CLUSTER_B_ACTIVE 1
+#define CLUSTER_A_SIZE 4 // threads on cluster A
+#define CLUSTER_B_SIZE 2 // threads on cluster B
 
 #define CLUSTER_SIZE MAX(CLUSTER_A_SIZE, CLUSTER_B_SIZE)
 
 #define CLUSTER_A 0
 #define CLUSTER_B 1
-
-#define FLOPS_PER_CYCLE 30 // Must be set per machine
+//TODO IS the flops accurate for TX2?
+#define FLOPS_PER_CYCLE 30 // Must be set per machine, scale of flops * 100
 
 #define CLUSTER_UNASSIGNED CLUSTER_AMOUNT+1
 
@@ -118,21 +122,29 @@
 #define LOW_FREQ_POWER 0
 #define HIGH_FREQ_POWER 1
 #define CLUSTER_POWER_RUNTIME_SAMPLES 2
-#define CLUSTER_A_POWER_IDLE 10
-#define CLUSTER_A_POWER_RUNTIME_CPU_LOW 100
-#define CLUSTER_A_POWER_RUNTIME_CPU_HIGH 1000
-#define CLUSTER_A_POWER_RUNTIME_CACHE_LOW 150
-#define CLUSTER_A_POWER_RUNTIME_CACHE_HIGH 1500
-#define CLUSTER_A_POWER_RUNTIME_MEMORY_LOW 200
-#define CLUSTER_A_POWER_RUNTIME_MEMORY_HIGH 2000
 
-#define CLUSTER_B_POWER_IDLE 20
-#define CLUSTER_B_POWER_RUNTIME_CPU_LOW 75
-#define CLUSTER_B_POWER_RUNTIME_CPU_HIGH 750
-#define CLUSTER_B_POWER_RUNTIME_CACHE_LOW 113
-#define CLUSTER_B_POWER_RUNTIME_CACHE_HIGH 1130
-#define CLUSTER_B_POWER_RUNTIME_MEMORY_LOW 150
-#define CLUSTER_B_POWER_RUNTIME_MEMORY_HIGH 1500
+#define CLUSTER_A_POWER_IDLE 152
+
+#define CLUSTER_A_POWER_RUNTIME_CPU_LOWS {304, 380, 456, 532}
+#define CLUSTER_A_POWER_RUNTIME_CPU_HIGHS {1217, 1976, 2812, 3644} 
+//TODO Temporary values, update
+#define CLUSTER_A_POWER_RUNTIME_CACHE_HIGHS {1215, 1706, 2168, 2629}
+#define CLUSTER_A_POWER_RUNTIME_CACHE_LOWS {345, 380, 455, 532}
+
+#define CLUSTER_A_POWER_RUNTIME_MEMORY_LOWS {363, 379, 455, 532}
+#define CLUSTER_A_POWER_RUNTIME_MEMORY_HIGHS {1213, 1591, 1892, 2194}
+
+
+#define CLUSTER_B_POWER_IDLE 76
+
+#define CLUSTER_B_POWER_RUNTIME_CPU_LOWS {456, 609}
+#define CLUSTER_B_POWER_RUNTIME_CPU_HIGHS {2275, 4320}
+//TODO Temporary values, update
+#define CLUSTER_B_POWER_RUNTIME_CACHE_HIGHS {1955, 3518}
+#define CLUSTER_B_POWER_RUNTIME_CACHE_LOWS {402, 554} 
+
+#define CLUSTER_B_POWER_RUNTIME_MEMORY_LOWS {379, 531}
+#define CLUSTER_B_POWER_RUNTIME_MEMORY_HIGHS {1818, 3174}
 
 #define THREAD_AWAKE 1
 #define THREAD_SLEEP 0
@@ -3133,7 +3145,41 @@ struct kmp_scheduler {
     kmp_int32 cluster_tids[CLUSTER_AMOUNT][CLUSTER_SIZE]; // thread identifiers "tid" for each cluster
     kmp_uint8 cluster_tid_entries[CLUSTER_AMOUNT]; // thread counter for each cluster
     kmp_uint32 idle_power[CLUSTER_AMOUNT];
-    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES]; //TODO not finished
+    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES][CLUSTER_SIZE] = 
+    {
+      //Cluster
+      { 
+        //Tasktype
+        {
+          CLUSTER_A_POWER_RUNTIME_CPU_LOWS,
+          CLUSTER_A_POWER_RUNTIME_CPU_HIGHS
+        },
+        {
+          CLUSTER_A_POWER_RUNTIME_CACHE_LOWS,
+          CLUSTER_A_POWER_RUNTIME_CACHE_HIGHS
+        },
+        {
+          CLUSTER_A_POWER_RUNTIME_MEMORY_LOWS,
+          CLUSTER_A_POWER_RUNTIME_MEMORY_HIGHS
+        }
+      },
+      { 
+        {
+          CLUSTER_B_POWER_RUNTIME_CPU_LOWS,
+          CLUSTER_B_POWER_RUNTIME_CPU_HIGHS
+        },
+        {
+          CLUSTER_B_POWER_RUNTIME_CACHE_LOWS,
+          CLUSTER_B_POWER_RUNTIME_CACHE_HIGHS
+        },
+        {
+          CLUSTER_B_POWER_RUNTIME_MEMORY_LOWS,
+          CLUSTER_B_POWER_RUNTIME_MEMORY_HIGHS
+        }
+      }
+    };
+    
+     //TODO not finished
     kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_SIZE]; // Threads status, 1 if awake, 0 sleeping
 };
 
