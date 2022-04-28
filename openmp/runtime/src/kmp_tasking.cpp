@@ -1013,9 +1013,9 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   kmp_uint32 finish_time = static_cast<kmp_uint32>(current_time);
 
 #if PERF_DYNAMIC_ON
-  if (taskdata->td_task_type == TASK_UNDEFINED) {
-#else
   if (taskdata->td_task_type == TASK_UNDEFINED && thread->th.th_counters_active) {
+#else
+  if (taskdata->td_task_type == TASK_UNDEFINED) {
 #endif
 
       //PERF
@@ -3239,7 +3239,7 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     pe.exclude_kernel = 1;
     pe.exclude_hv = 1;
 
-    // Systemcall to open perf counters
+    // Systemcalls to open perf counters
     thread->th.th_counter_instructions = perf_event_open(&pe, 0, thread->th.th_cpu, -1, 0);
     if(thread->th.th_counter_instructions < 0) printf("Failed instructions\n");
 
@@ -4497,26 +4497,9 @@ static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uin
 static void __kmp_scheduler_init(kmp_info_t *thread){
 
     kmp_sched_p->idle_power[CLUSTER_A] = CLUSTER_A_POWER_IDLE;
-    /*
-    kmp_sched_p->runtime_power[CLUSTER_A][TASK_CPU][LOW_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CPU_LOW;
-    kmp_sched_p->runtime_power[CLUSTER_A][TASK_CPU][HIGH_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CPU_HIGH;
-    kmp_sched_p->runtime_power[CLUSTER_A][TASK_CACHE][LOW_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CACHE_LOW;
-    kmp_sched_p->runtime_power[CLUSTER_A][TASK_CACHE][HIGH_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_CACHE_HIGH;
-    kmp_sched_p->runtime_power[CLUSTER_A][TASK_MEMORY][LOW_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_MEMORY_LOW;
-    kmp_sched_p->runtime_power[CLUSTER_A][TASK_MEMORY][HIGH_FREQ_POWER] = CLUSTER_A_POWER_RUNTIME_MEMORY_HIGH;
-    */
-    // TODO FIX proper init for systems utilizing more then one cluster
-  //Creates warnings from the compiler
+
 #ifdef CLUSTER_B_ACTIVE
     kmp_sched_p->idle_power[CLUSTER_B] = CLUSTER_A_POWER_IDLE;
-    /*
-    kmp_sched_p->runtime_power[CLUSTER_B][TASK_CPU][LOW_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CPU_LOW;
-    kmp_sched_p->runtime_power[CLUSTER_B][TASK_CPU][HIGH_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CPU_HIGH;
-    kmp_sched_p->runtime_power[CLUSTER_B][TASK_CACHE][LOW_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CACHE_LOW;
-    kmp_sched_p->runtime_power[CLUSTER_B][TASK_CACHE][HIGH_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_CACHE_HIGH;
-    kmp_sched_p->runtime_power[CLUSTER_B][TASK_MEMORY][LOW_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_MEMORY_LOW;
-    kmp_sched_p->runtime_power[CLUSTER_B][TASK_MEMORY][HIGH_FREQ_POWER] = CLUSTER_B_POWER_RUNTIME_MEMORY_HIGH;
-    */
 #endif
 }
 
@@ -4677,9 +4660,8 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     else{
         // TODO If tasktype is unknown, select fastest? cluster for identification
         // TODO Change to max number of clusters...
-        optimal_cluster = CLUSTER_A;
-        optimal_cluster = 1;
-        optimal_cluster_width = 1;
+        optimal_cluster = CLUSTER_B;
+        optimal_cluster_width = kmp_sched_p->cluster_tid_entries[optimal_cluster];
     }
     //printf("optimal_cluster_width = %d\n", optimal_cluster_width);
     //TODO Move this out to its own function, should return the optimal cluster and width instead
