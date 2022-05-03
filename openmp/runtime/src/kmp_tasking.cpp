@@ -3234,10 +3234,9 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     else thread->th.th_cluster = CLUSTER_A;
     // add your tid and cluster to the scheduler
     thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
-    printf("CPU = %d, CLUSTER = %d\n", thread->th.th_cpu, thread->th.th_cluster);
     
     #if DEBUG_PRINT_THREAD_INFO
-    printf("TID = %d, GTID = %d, CPU = %u \n", tid, __kmp_get_gtid(), thread->th.th_cpu);
+    printf("TID = %d, GTID = %d, CPU = %u \n, CLUSTER = %d", tid, __kmp_get_gtid(), thread->th.th_cpu, thread->th.th_cluster);
     #endif
 
     thread->th.th_counters_active = 1;
