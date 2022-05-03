@@ -3233,8 +3233,12 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     thread->th.th_cpu = sched_getcpu();
 
     // TODO Fix cluster initialisation here, currently hardcoded
+#if TX2
     if(thread->th.th_cpu == 1 || thread->th.th_cpu == 2) thread->th.th_cluster = CLUSTER_B;
     else thread->th.th_cluster = CLUSTER_A;
+#else
+    thread->th.th_cluster = CLUSTER_A;
+#endif
     // add your tid and cluster to the scheduler
     thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
     
