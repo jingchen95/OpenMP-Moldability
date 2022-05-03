@@ -3082,7 +3082,6 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   kmp_int32 target;
   kmp_int32 victim_tid;
 
-
   KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
 
   threads_data = task_team->tt.tt_threads_data;
@@ -3090,6 +3089,14 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
 
   victim_tid = victim_thr->th.th_info.ds.ds_tid;
   victim_td = &threads_data[victim_tid];
+
+  kmp_info_t *thread = __kmp_threads[gtid];
+  //ME1
+
+  #if TASK_STEALING_POLICY == NO_TASK_STEALING
+  if(thread->th.th_cluster != victim_thr->th.th_cluster) return NULL;
+  #endif
+  //ME2
 
   KA_TRACE(10, ("__kmp_steal_task(enter): T#%d try to steal from T#%d: "
                 "task_team=%p ntasks=%d head=%u tail=%u\n",
@@ -3122,6 +3129,15 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   KMP_DEBUG_ASSERT(victim_td->td.td_deque != NULL);
   current = __kmp_threads[gtid]->th.th_current_task;
   taskdata = victim_td->td.td_deque[victim_td->td.td_deque_head];
+
+  //ME1
+  #if TASK_STEALING_POLICY == NO_TASKLOOP_STEALING
+  if(taskdata->td_cluster == CLUSTER_UNASSIGNED && thread->th.th_cluster != taskdata->td_cluster){
+    return NULL;
+  }
+  #endif
+  //ME2
+
   if (__kmp_task_is_allowed(gtid, is_constrained, taskdata, current)) {
     // Bump head pointer and Wrap.
     victim_td->td.td_deque_head =
@@ -3218,6 +3234,7 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     else thread->th.th_cluster = CLUSTER_A;
     // add your tid and cluster to the scheduler
     thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
+    printf("CPU = %d, CLUSTER = %d\n", thread->th.th_cpu, thread->th.th_cluster);
     
     #if DEBUG_PRINT_THREAD_INFO
     printf("TID = %d, GTID = %d, CPU = %u \n", tid, __kmp_get_gtid(), thread->th.th_cpu);
@@ -4540,7 +4557,7 @@ int unique_taskloop_id = 0;
 static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid, kmp_uint64 max_split){
     //debug
 #if DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO
-    if (global_taskcounter){
+    //if (global_taskcounter){
         printf("Performance model update after %d tasks\nExecution times:  | CPU | CACHE | MEMORY\n",
                global_taskcounter);
         for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
@@ -4552,7 +4569,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                        kmp_perf_p->execution_times[cluster][TASK_MEMORY][width]);
             }
         }
-    }
+    //}
 #endif
 
 #if DEBUG_PRINT_POWER_VALUES
@@ -4660,8 +4677,9 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     else{
         // TODO If tasktype is unknown, select fastest? cluster for identification
         // TODO Change to max number of clusters...
-        optimal_cluster = CLUSTER_B;
-        optimal_cluster_width = kmp_sched_p->cluster_tid_entries[optimal_cluster];
+        optimal_cluster = CLUSTER_A;
+        optimal_cluster_width = 4;
+        //printf("optimal width = %d", kmp_sched_p->cluster_tid_entries[optimal_cluster]);
     }
     //printf("optimal_cluster_width = %d\n", optimal_cluster_width);
     //TODO Move this out to its own function, should return the optimal cluster and width instead
@@ -4776,7 +4794,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
     }
     else{
         // TODO If tasktype is unknown, select fastest? cluster for identification
-        optimal_cluster = CLUSTER_A;
+        optimal_cluster = CLUSTER_B;
     }
     // We now have the optimal cluster
     // schedule task on optimal thread right now picks the first sleeping thread it finds
@@ -5677,7 +5695,8 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
     taskdata->td_task_type = TASK_PATTERN;
     __kmp_taskloop_mapping(thread, task, tid, tc + 1);
 #if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
-      printf("Taskloop number = %d, Number of tasks recommended = %hhu\n", taskdata->td_task_id, taskdata->td_taskwidth);
+      printf("Taskloop number = %d, Cluster = %d, Number of tasks recommended = %hhu\n",
+       taskdata->td_task_id, current_task->td_cluster, taskdata->td_taskwidth);
 #endif
     grainsize = taskdata->td_taskwidth;
     //TODO need to calculate max allowed grainsize here

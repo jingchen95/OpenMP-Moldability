@@ -75,8 +75,8 @@
 
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
-#define DEBUG_PRINT_TASK_INFO 1 | DEBUG_PRINT_ALL
-#define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 1
+#define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 0
 #define DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO 0
 #define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0
 #define DEBUG_PRINT_POWER_VALUES 0
@@ -85,6 +85,13 @@
 
 #define MAX_STEAL_ATTEMPTS 5
 #define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
+
+// Sets different stealing modes between clusters
+#define ALL_TASK_STEALING_ALLOWED 0 // allows for all threads to steal from eachother
+#define NO_TASKLOOP_STEALING 1 // disallowes taskloop stealing between clusters but allow tasks to be stolen
+#define NO_TASK_STEALING 2 //Disables all task stealing between clusters
+
+#define TASK_STEALING_POLICY ALL_TASK_STEALING_ALLOWED
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
