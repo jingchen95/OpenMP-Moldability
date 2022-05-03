@@ -45,6 +45,8 @@ include_directories(
   ${LIBOMP_SRC_DIR}/i18n
   ${LIBOMP_INC_DIR}
   ${LIBOMP_SRC_DIR}/thirdparty/ittnotify
+  ${LIBOMP_SRC_DIR}/thirdparty/alglib
+  ${LIBOMP_INC_DIR}/thirdparty/alglib
 )
 if(${LIBOMP_USE_HWLOC})
   include_directories(${LIBOMP_HWLOC_INSTALL_DIR}/include)
@@ -88,6 +90,15 @@ else()
     kmp_dispatch.cpp
     kmp_lock.cpp
     kmp_sched.cpp
+    thirdparty/alglib/interpolation.cpp
+    thirdparty/alglib/ap.cpp
+    thirdparty/alglib/alglibinternal.cpp
+    thirdparty/alglib/alglibmisc.cpp
+    thirdparty/alglib/linalg.cpp
+    thirdparty/alglib/solvers.cpp
+    thirdparty/alglib/optimization.cpp
+    thirdparty/alglib/specialfunctions.cpp
+    thirdparty/alglib/integration.cpp
   )
   if(WIN32)
     # Windows specific files

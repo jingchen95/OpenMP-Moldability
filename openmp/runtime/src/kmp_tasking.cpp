@@ -18,6 +18,9 @@
 #include "kmp_taskdeps.h"
 
 //ME1
+#if INTERPOLATION == ONLINE
+#include "interpolation.h"
+#endif
 using namespace std::chrono_literals;
 
 std::unordered_map<kmp_routine_entry_t, task_definition_t> task_map;
@@ -51,7 +54,7 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
 static void __kmp_performance_model_init();
 static void __kmp_performance_model_reset(kmp_uint8 cluster);
 static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time, kmp_uint8 width);
-static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint8 width);
+static kmp_uint32 __kmp_performance_model_get(const kmp_uint8 cluster, const kmp_uint8 tasktype, const kmp_uint8 width);
 static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uint8 status);
 static void __kmp_scheduler_init(kmp_info_t *thread);
 static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid);
@@ -3214,7 +3217,7 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     thread->th.th_cpu = sched_getcpu();
 
     // TODO Fix cluster initialisation here, currently hardcoded
-    if(thread->th.th_cpu == 1 || thread->th.th_cpu == 2) thread->th.th_cluster = CLUSTER_B;
+    if(thread->th.th_cpu == 1 || thread->th.th_cpu == 2) thread->th.th_cluster = CLUSTER_A;
     else thread->th.th_cluster = CLUSTER_A;
     // add your tid and cluster to the scheduler
     thread->th.th_sched_pos = __kmp_scheduler_add_thread(thread->th.th_cluster, tid);
@@ -4427,63 +4430,61 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
     }
 }
 
+static double calculate_scale(const kmp_uint8 cluster, const kmp_uint8 tasktype, const int norm_values[]){
+    int values = 0;
+    double sum = 0, scale;
+    for (int i = 0; i<CLUSTER_A_SIZE; i++){
+        if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
+
+        values++;
+        sum += double(kmp_perf_p->execution_times[cluster][tasktype][i])/double(norm_values[i]);
+    }
+    if (values > 0)
+        return scale = sum/values;
+    else return 1;
+}
+
 // Get the execution time for given cluster and task type
-static kmp_uint32 __kmp_performance_model_get(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint8 width){
-#if INTERPOLATE_PERFORMANCE
+static kmp_uint32 __kmp_performance_model_get(const kmp_uint8 cluster, const kmp_uint8 tasktype, const kmp_uint8 width){
+#if (INTERPOLATION == POLYNOMIAL) || (INTERPOLATION == PMNF)
     if (kmp_perf_p->execution_times[cluster][tasktype][width - 1] != 0)
         return kmp_perf_p->execution_times[cluster][tasktype][width - 1];
     else{
-        double exec_time = 0, scale = 1, sum = 0;
-        int values = 0;
+        double exec_time = 0, scale = 1;
         if (tasktype == TASK_CPU){
-#if INTERPOLATE_POLY
-            exec_time = -0.4318*pow(width, 3) + 7.574*pow(width, 2) - 46.45 * width + 129.7;
+
+#if INTERPOLATION == POLYNOMIAL
             int norm_values[] = {92,60,48,39,33,31,25,23};
-#else
-            exec_time = 87.35240664962824 + -22.239293769083655 * log2(width);
+#elif INTERPOLATION == PMNF
             int norm_values[] = {100,60,49,40,34,32,26,24};
 #endif
+            exec_time = cpu_interpolation(width);
+            scale = calculate_scale(cluster, tasktype, norm_values);
 
-            for (int i = 0; i<CLUSTER_A_SIZE; i++){
-                if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
-
-                values++;
-                sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
-            }
         } else if (tasktype == TASK_MEMORY){
-#if INTERPOLATE_POLY
-            exec_time = -0.3788*pow(width, 3) + 6.447 *pow(width, 2) - 36.89 * width + 118.2;
+#if INTERPOLATION == POLYNOMIAL
             int norm_values[] = {88,66,55,51,48,46,46,42};
-#else
-            exec_time = 89.65789787240755 + -26.531804044307375 * pow(log2(width), 0.5);
+#elif INTERPOLATION == PMNF
             int norm_values[] = {100,66,56,51,49,47,46,42};
 #endif
-            for (int i = 0; i<CLUSTER_A_SIZE; i++){
-                if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
+            exec_time = memory_interpolation(width);
+            scale = calculate_scale(cluster, tasktype, norm_values);
 
-                values++;
-                sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
-            }
         }else if (tasktype == TASK_CACHE){
-#if INTERPOLATE_POLY
-            exec_time = -0.4242*pow(width, 3) + 6.18 *pow(width, 2) - 31.4  * width + 100.9;
+#if INTERPOLATION == POLYNOMIAL
             int norm_values[] = {76,60,47,46,53,43,32,31};
-#else
-            exec_time = 75.70914797557946 + -13.81904977590176 * log2(width);
+#elif INTERPOLATION == PMNF
             int norm_values[] = {100,61,48,46,53,43,32,31};
 #endif
-            for (int i = 0; i<CLUSTER_A_SIZE; i++){
-                if (kmp_perf_p->execution_times[cluster][tasktype][i] == 0) continue;
-
-                values++;
-                sum += kmp_perf_p->execution_times[cluster][tasktype][i]/norm_values[i];
-            }
+            exec_time = cache_interpolation(width);
+            scale = calculate_scale(cluster, tasktype, norm_values);
         }
-        if (values > 0)
-            scale = sum/values;
+        printf("Exec_time = %f\n", exec_time);
+
+        printf("Interpolated value at %d = %d\n", width, int (exec_time * scale));
         return exec_time * scale;
     }
-#else
+#else //end (INTERPOLATION == POLYNOMIAL) || (INTERPOLATION == PMNF)
     return kmp_perf_p->execution_times[cluster][tasktype][width - 1];
 #endif
 }
@@ -4576,6 +4577,11 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     kmp_uint8 optimal_cluster_width;
     kmp_uint32 minimum_energy = UINT_MAX;
 
+#if INTERPOLATION == ONLINE
+    alglib::spline1dinterpolant online_model;
+    bool created_model;
+#endif
+
     // Temporary task type variable, to prevent pattern task classification from change
     kmp_uint8 task_type;
     // Get and set task type classification
@@ -4592,6 +4598,9 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
         // TODO For each execution place (cluster...) should be randomly selected
         for (kmp_int32 curr_cluster = 0; curr_cluster < kmp_sched_p->num_clusters; curr_cluster++) {
 
+#if INTERPOLATION == ONLINE
+            created_model = false;
+#endif
             // Max allowed width for current task depending on cluster size and taskloop size
             kmp_uint8 cluster_width_max = (kmp_sched_p->cluster_tid_entries[curr_cluster]) < max_split ?
                                           kmp_sched_p->cluster_tid_entries[curr_cluster] : max_split;
@@ -4638,8 +4647,38 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                         idle_power + kmp_sched_p->runtime_power[curr_cluster][task_type][HIGH_FREQ_POWER][cluster_width - 1];
 
                 // Get the execution time from the performance model
-                kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster,
-                                                                   task_type, cluster_width);
+                kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster,task_type, cluster_width);
+#if INTERPOLATION == ONLINE
+                if (exec_time <= 0) {
+                    if (!created_model) {
+
+                        std::vector<double> x_in, y_in;
+                        alglib::real_1d_array x, y;
+
+                        for (int i = 0; i < CLUSTER_A_SIZE; i++) {
+                            if (kmp_perf_p->execution_times[curr_cluster][task_type][i] == 0) continue;
+
+                            y_in.push_back(kmp_perf_p->execution_times[curr_cluster][task_type][i]);
+                            x_in.push_back(i + 1);
+                        }
+
+
+                        if (x_in.size() >= 2) {
+                            x.attach_to_ptr(x_in.size(), x_in.data());
+                            y.attach_to_ptr(y_in.size(), y_in.data());
+
+                            alglib::spline1dbuildlinear(x, y, online_model);
+                            created_model = TRUE;
+                            exec_time = int (spline1dcalc(online_model, cluster_width));
+                        }
+                    }else{
+                        exec_time = int (spline1dcalc(online_model, cluster_width));
+                    }
+                    if (exec_time <= 0) exec_time = 0;
+                }
+
+#endif
+
                 // Calculate the energy based on the execution time and idle + runtime power consumption
                 // Depending on how we store the execution time we may need to change the scale of exec time here
                 kmp_uint32 energy = exec_time * total_power;
@@ -4660,8 +4699,8 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     else{
         // TODO If tasktype is unknown, select fastest? cluster for identification
         // TODO Change to max number of clusters...
-        optimal_cluster = CLUSTER_B;
-        optimal_cluster_width = kmp_sched_p->cluster_tid_entries[optimal_cluster];
+        optimal_cluster = CLUSTER_A;
+        optimal_cluster_width = 4;
     }
     //printf("optimal_cluster_width = %d\n", optimal_cluster_width);
     //TODO Move this out to its own function, should return the optimal cluster and width instead

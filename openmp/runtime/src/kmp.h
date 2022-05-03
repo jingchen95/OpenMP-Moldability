@@ -70,15 +70,32 @@
 #define EXPORT_DATA 0
 #define MEASURE_ACCURACY 0
 
-#define INTERPOLATE_PERFORMANCE 0
-#define INTERPOLATE_POLY 0
+
+#define NONE 0
+#define POLYNOMIAL 1
+#define PMNF 2
+#define ONLINE 3
+// INTERPOLATION should have one of the 4 values above
+#define INTERPOLATION NONE
+
+#if INTERPOLATION == PMNF
+#define memory_interpolation(x) 89.65789787240755 + -26.531804044307375 * pow(log2(x), 0.5)
+#define cpu_interpolation(x) 87.35240664962824 + -22.239293769083655 * log2(x)
+#define cache_interpolation(x) 75.70914797557946 + -13.81904977590176 * log2(x)
+#endif
+
+#if INTERPOLATION == POLYNOMIAL
+#define memory_interpolation(x)  -0.3788*pow(x, 3) + 6.447 *pow(x, 2) - 36.89 * x + 118.2
+#define cpu_interpolation(x) -0.4318*pow(x, 3) + 7.574*pow(x, 2) - 46.45 * x + 129.7;
+#define cache_interpolation(x) -0.4242*pow(x, 3) + 6.18 *pow(x, 2) - 31.4  * x + 100.9
+#endif
 
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 1 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 1
 #define DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO 0
-#define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0
+#define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 1
 #define DEBUG_PRINT_POWER_VALUES 0
 
 #define PERF_DYNAMIC_ON 0
@@ -88,8 +105,8 @@
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
-#define CLUSTER_AMOUNT 2 // Number of clusters
-#define CLUSTER_B_ACTIVE 1
+#define CLUSTER_AMOUNT 2// Number of clusters
+#define CLUSTER_B_ACTIVE 0
 #define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 2 // threads on cluster B
 
