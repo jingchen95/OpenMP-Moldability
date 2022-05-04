@@ -70,7 +70,6 @@
 #define EXPORT_DATA 0
 #define MEASURE_ACCURACY 0
 
-
 #define NONE 0
 #define POLYNOMIAL 1
 #define PMNF 2
@@ -95,7 +94,7 @@
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 0
 #define DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO 0
-#define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 1
+#define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0
 #define DEBUG_PRINT_POWER_VALUES 0
 
 #define PERF_DYNAMIC_ON 0
@@ -2896,8 +2895,11 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint8 th_counters_active = 0; // Flag to indicate if counters are active
   kmp_uint8 th_perf_init_flag = 0;
   kmp_int32 th_counter_cycles;
-  kmp_int32 th_counter_instructions;
   kmp_int32 th_counter_cachemiss;
+  #if DEBUG_PRINT_TASK_INFO
+  kmp_int32 th_counter_instructions;
+  #endif
+
 
   // TODO cluster currently hardcoded, fix for use with more then one cluster
   // TODO Probably a better idea to store a hashmap with these variables instead of sticking them to the thread struct

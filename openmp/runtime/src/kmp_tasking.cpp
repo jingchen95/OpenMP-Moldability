@@ -52,7 +52,7 @@ static void __kmp_bottom_half_finish_proxy(kmp_int32 gtid, kmp_task_t *ptask);
 static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
                                 kmp_int32 tid);
 static void __kmp_performance_model_init();
-static void __kmp_performance_model_reset(kmp_uint8 cluster);
+//static void __kmp_performance_model_reset(kmp_uint8 cluster); // unused
 static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time, kmp_uint8 width);
 static kmp_uint32 __kmp_performance_model_get(const kmp_uint8 cluster, const kmp_uint8 tasktype, const kmp_uint8 width);
 static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uint8 status);
@@ -622,7 +622,6 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   current_task->td_flags.executing = 0;
 
   //ME1
-  kmp_int32 tid = __kmp_tid_from_gtid(gtid);
   // store away the execution time of current task before starting on the new one
 
   // If counters aren't init, do so
@@ -633,6 +632,7 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   // Add extra execution time
   current_task->td_previous_exectime +=  (current_time - current_task->td_starttime);
 #if DEBUG_PRINT_THREAD_INFO
+  kmp_int32 tid = __kmp_tid_from_gtid(gtid);
   // Debug message
   printf("Started working on task %d on thread %d\n", taskdata->td_task_id, tid);
 #endif
@@ -663,19 +663,23 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
       //else ++thread->th.th_counters_active;
 
       kmp_uint64 current_cycles = 0;
-      kmp_uint64 current_instructions = 0;
       kmp_uint64 current_cachemiss = 0;
       // Read from counters
       read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
+
+      #if DEBUG_PRINT_TASK_INFO
       read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
+      kmp_uint64 current_instructions = 0;
+      current_task->td_instructions_prev += (current_instructions - current_task->td_instructions_start);
+      taskdata->td_instructions_start = current_instructions;
+      #endif
+
       read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
       // Add on previous counters
       current_task->td_cycles_prev += (current_cycles - current_task->td_cycles_start);
-      current_task->td_instructions_prev += (current_instructions - current_task->td_instructions_start);
       current_task->td_cachemiss_prev += (current_cachemiss - current_task->td_cachemiss_start);
       // Update starting counters
       taskdata->td_cycles_start = current_cycles;
-      taskdata->td_instructions_start = current_instructions;
       taskdata->td_cachemiss_start = current_cachemiss;
 
       // Starting counters takes time, read system time again
@@ -1006,7 +1010,6 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       thread->th.th_task_team; // might be NULL for serial teams...
 
   //ME1
-  kmp_int32 tid = __kmp_tid_from_gtid(gtid);
   // Calculates the task's execution time
   kmp_real64 current_time = 0;
   __kmp_read_system_time(&current_time);
@@ -1023,16 +1026,20 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
       //PERF
       kmp_uint64 current_cycles = 0;
-      kmp_uint64 current_instructions = 0;
       kmp_uint64 current_cachemiss = 0;
       // Read from counters
       read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
-      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
       read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
+
+      #if DEBUG_PRINT_TASK_INFO
+      kmp_uint64 current_instructions = 0;
+      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
+      kmp_uint64 instructions_finish =
+      current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
+
+      #endif
       // Get final counter values
       kmp_uint64 cycles_finish = current_cycles - taskdata->td_cycles_start + taskdata->td_cycles_prev;
-      kmp_uint64 instructions_finish =
-              current_instructions - taskdata->td_instructions_start + taskdata->td_instructions_prev;
       kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
       
       #if PERF_DYNAMIC_ON
@@ -1044,6 +1051,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   
 
 #if DEBUG_PRINT_TASK_INFO
+      kmp_int32 tid = __kmp_tid_from_gtid(gtid);
       // Debug print
       // freq in MHZ
       if(finish_time) {
@@ -1270,7 +1278,6 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   //PERF
   if (resumed_task->td_task_type == TASK_UNDEFINED) {
       kmp_uint64 current_cycles = 0;
-      kmp_uint64 current_instructions = 0;
       kmp_uint64 current_cachemiss = 0;
 
       #if PERF_DYNAMIC_ON
@@ -1280,11 +1287,15 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
       // Read from counters
       read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
-      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
       read(thread->th.th_counter_cachemiss, &current_cachemiss, sizeof(current_cachemiss));
 
-      resumed_task->td_cycles_start = current_cycles;
+      #if DEBUG_PRINT_TASK_INFO
+      kmp_uint64 current_instructions = 0;
+      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
       resumed_task->td_instructions_start = current_instructions;
+      #endif
+
+      resumed_task->td_cycles_start = current_cycles;
       resumed_task->td_cachemiss_start = current_cachemiss;
   }
   //ME2
@@ -3093,8 +3104,10 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   victim_tid = victim_thr->th.th_info.ds.ds_tid;
   victim_td = &threads_data[victim_tid];
 
-  kmp_info_t *thread = __kmp_threads[gtid];
   //ME1
+  #if TASK_STEALING_POLICY
+  kmp_info_t *thread = __kmp_threads[gtid];
+  #endif
 
   #if TASK_STEALING_POLICY == NO_TASK_STEALING
   if(thread->th.th_cluster != victim_thr->th.th_cluster) return NULL;
@@ -3257,14 +3270,16 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
 
     pe.type = PERF_TYPE_HARDWARE;
     pe.size = sizeof(struct perf_event_attr);
-    pe.config = PERF_COUNT_HW_INSTRUCTIONS;
     pe.disabled = 0;
     pe.exclude_kernel = 1;
     pe.exclude_hv = 1;
 
-    // Systemcalls to open perf counters
+    // Systemcalls to open perf counters 
+    #if DEBUG_PRINT_TASK_INFO
+    pe.config = PERF_COUNT_HW_INSTRUCTIONS;
     thread->th.th_counter_instructions = perf_event_open(&pe, 0, thread->th.th_cpu, -1, 0);
     if(thread->th.th_counter_instructions < 0) printf("Failed instructions\n");
+    #endif
 
     pe.config = PERF_COUNT_HW_CPU_CYCLES;
     thread->th.th_counter_cycles = perf_event_open(&pe, 0, thread->th.th_cpu, -1, 0);
@@ -3423,7 +3438,7 @@ static inline int __kmp_execute_tasks_template(
               std::unique_lock <std::mutex> lk(cv_m);
               //printf("Thread %d going to sleep for %d ms\n", __kmp_tid_from_gtid(gtid),
               //       (1 << thread->th.th_sleep_shift));
-              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 10us) == std::cv_status::timeout) {
+              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 100us) == std::cv_status::timeout) {
                   //Slept the entire specified duration
                   ++thread->th.th_sleep_shift;
                   if (thread->th.th_sleep_shift > MAX_SLEEP_SHIFT) {
@@ -3879,11 +3894,11 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
 
 
       //ME1
-      kmp_team_t *team = __kmp_get_team();
       kmp_info_t *thread = __kmp_threads[i];
 
-      int gtid_test = __kmp_gtid_from_tid(i, team);
 #if DEBUG_PRINT_THREAD_INFO
+      kmp_team_t *team = __kmp_get_team();
+      int gtid_test = __kmp_gtid_from_tid(i, team);
       printf("gtid = %d, i=%d\n", gtid_test,i);
 #endif
       if (thread_data->td.td_deque == NULL) {
@@ -4371,8 +4386,10 @@ static void __kmp_perf_enable(kmp_info_t *thread){
     ioctl(thread->th.th_counter_cycles, PERF_EVENT_IOC_RESET, 0);
     ioctl(thread->th.th_counter_cycles, PERF_EVENT_IOC_ENABLE, 0);
 
+    #if DEBUG_PRINT_TASK_INFO
     ioctl(thread->th.th_counter_instructions, PERF_EVENT_IOC_RESET, 0);
     ioctl(thread->th.th_counter_instructions, PERF_EVENT_IOC_ENABLE, 0);
+    #endif
 
     ioctl(thread->th.th_counter_cachemiss, PERF_EVENT_IOC_RESET, 0);
     ioctl(thread->th.th_counter_cachemiss, PERF_EVENT_IOC_ENABLE, 0);
@@ -4386,7 +4403,10 @@ static void __kmp_perf_disable(kmp_info_t *thread){
     // 
     ioctl(thread->th.th_counter_cycles, PERF_EVENT_IOC_DISABLE, 0);
     ioctl(thread->th.th_counter_cachemiss, PERF_EVENT_IOC_DISABLE, 0);
+
+    #if DEBUG_PRINT_TASK_INFO
     ioctl(thread->th.th_counter_instructions, PERF_EVENT_IOC_DISABLE, 0);
+    #endif
 
     thread->th.th_counters_active = 0;
     return;
@@ -4408,6 +4428,7 @@ static void __kmp_performance_model_init(){
         }
     }
 }
+/*
 // Resets the performance model struct for given cluster
 // To be used when the frequency for the cluster is changed
 // Currently unused
@@ -4418,6 +4439,7 @@ static void __kmp_performance_model_reset(kmp_uint8 cluster){
         }
     }
 }
+*/
 
 // Add a new execution time sample for the performance model
 // TODO if the width is more then one, we need to gather the other execution times also
@@ -4449,7 +4471,7 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
                 (4 * kmp_perf_p->execution_times[cluster][tasktype][width_index] + execution_time) / 5;
     }
 }
-
+#if (INTERPOLATION == POLYNOMIAL) || (INTERPOLATION == PMNF)
 static double calculate_scale(const kmp_uint8 cluster, const kmp_uint8 tasktype, const int norm_values[]){
     int values = 0;
     double sum = 0, scale;
@@ -4463,6 +4485,7 @@ static double calculate_scale(const kmp_uint8 cluster, const kmp_uint8 tasktype,
         return scale = sum/values;
     else return 1;
 }
+#endif
 
 // Get the execution time for given cluster and task type
 static kmp_uint32 __kmp_performance_model_get(const kmp_uint8 cluster, const kmp_uint8 tasktype, const kmp_uint8 width){
