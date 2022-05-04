@@ -653,6 +653,8 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
       // PERF
       // Get value
 
+      #if !PERF_DISABLE
+
       #if PERF_DYNAMIC_ON
       // Start the counters if not active
       if (thread->th.th_counters_active == 0) __kmp_perf_enable(thread);
@@ -684,6 +686,8 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
 
       // Starting counters takes time, read system time again
       __kmp_read_system_time(&current_time);
+
+      #endif
   }
   // Set task start time
   taskdata->td_starttime = current_time;
@@ -1023,7 +1027,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 #else
   if (taskdata->td_task_type == TASK_UNDEFINED) {
 #endif
-
+      #if !PERF_DISABLE
       //PERF
       kmp_uint64 current_cycles = 0;
       kmp_uint64 current_cachemiss = 0;
@@ -1048,6 +1052,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       //TODO may cause problems if there is no resumed task?
       __kmp_perf_disable(thread);
       #endif
+      #endif
   
 
 #if DEBUG_PRINT_TASK_INFO
@@ -1062,8 +1067,10 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 #endif
       // If the routine haven't been classified during this execution, classify the task
       if(!__kmp_contains_def(task->routine)) {
-          if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
           task_definition_t task_type;
+
+          #if !PERF_DISABLE
+          if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
           kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
           if (arithmetic_intensity > AI_CPU_LIMIT) {
               taskdata->td_task_type = TASK_CPU;
@@ -1075,6 +1082,11 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
               taskdata->td_task_type = TASK_MEMORY;
               task_type = memory_bound;
           }
+          #else
+         taskdata->td_task_type = TASK_MEMORY;
+         task_type = memory_bound;
+
+          #endif
 #if DEBUG_PRINT_TASK_INFO
           std::string str;
                 if (arithmetic_intensity < AI_CACHE_LIMIT) str = "TASK_MEMORY";
@@ -1275,6 +1287,8 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 
   //ME1
   __kmp_read_system_time(&resumed_task->td_starttime);
+
+  #if !PERF_DISABLE
   //PERF
   if (resumed_task->td_task_type == TASK_UNDEFINED) {
       kmp_uint64 current_cycles = 0;
@@ -1299,6 +1313,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       resumed_task->td_cachemiss_start = current_cachemiss;
   }
   //ME2
+  #endif
   resumed_task->td_flags.executing = 1; // resume previous task
 
   KA_TRACE(
@@ -3259,8 +3274,10 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     printf("TID = %d, GTID = %d, CPU = %u \n, CLUSTER = %d", tid, __kmp_get_gtid(), thread->th.th_cpu, thread->th.th_cluster);
     #endif
 
-    thread->th.th_counters_active = 1;
     thread->th.th_perf_init_flag = 1;
+
+    #if !PERF_DISABLE
+    thread->th.th_counters_active = 1;
 
     // Perf config structure
     struct perf_event_attr pe;
@@ -3288,6 +3305,8 @@ static void __kmp_perf_init_counters(kmp_info_t *thread){
     pe.config = PERF_COUNT_HW_CACHE_MISSES;
     thread->th.th_counter_cachemiss = perf_event_open(&pe, 0, thread->th.th_cpu, -1, 0);
     if(thread->th.th_counter_cachemiss < 0) printf("Failed cache misses\n");
+    
+    #endif
 
     return;
 }
@@ -3427,6 +3446,7 @@ static inline int __kmp_execute_tasks_template(
           victim_tid = -2; // no successful victim found
         }
       }
+      #if !SLEEP_DISABLED
       //ME1
       //No task was stolen
       if (task == NULL) {
@@ -3438,7 +3458,7 @@ static inline int __kmp_execute_tasks_template(
               std::unique_lock <std::mutex> lk(cv_m);
               //printf("Thread %d going to sleep for %d ms\n", __kmp_tid_from_gtid(gtid),
               //       (1 << thread->th.th_sleep_shift));
-              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * 100us) == std::cv_status::timeout) {
+              if (thread->th.th_cv.wait_for(lk, (1 << thread->th.th_sleep_shift) * SLEEP_DURATION) == std::cv_status::timeout) {
                   //Slept the entire specified duration
                   ++thread->th.th_sleep_shift;
                   if (thread->th.th_sleep_shift > MAX_SLEEP_SHIFT) {
@@ -3461,6 +3481,7 @@ static inline int __kmp_execute_tasks_template(
           thread->th.th_sleep_shift = 0;
       }
       //ME2
+      #endif
       if (task == NULL)
         break; // break out of tasking loop
 

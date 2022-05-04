@@ -89,6 +89,21 @@
 #define cache_interpolation(x) -0.4242*pow(x, 3) + 6.18 *pow(x, 2) - 31.4  * x + 100.9
 #endif
 
+// Sets different stealing modes between clusters
+#define ALL_TASK_STEALING_ALLOWED 0 // allows for all threads to steal from eachother
+#define NO_TASKLOOP_STEALING 1 // disallowes taskloop stealing between clusters but allow tasks to be stolen // Not working atm
+#define NO_TASK_STEALING 2 //Disables all task stealing between clusters
+
+// Configs
+#define TASK_STEALING_POLICY ALL_TASK_STEALING_ALLOWED
+#define SLEEP_DURATION 10us
+#define PERF_DISABLE 0
+#define PERF_DYNAMIC_ON 1 && !PERF_DISABLE
+#define SLEEP_DISABLED 0
+
+#define MAX_STEAL_ATTEMPTS 5
+#define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
+
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
@@ -96,18 +111,6 @@
 #define DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO 0
 #define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0
 #define DEBUG_PRINT_POWER_VALUES 0
-
-#define PERF_DYNAMIC_ON 0
-
-#define MAX_STEAL_ATTEMPTS 5
-#define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
-
-// Sets different stealing modes between clusters
-#define ALL_TASK_STEALING_ALLOWED 0 // allows for all threads to steal from eachother
-#define NO_TASKLOOP_STEALING 1 // disallowes taskloop stealing between clusters but allow tasks to be stolen
-#define NO_TASK_STEALING 2 //Disables all task stealing between clusters
-
-#define TASK_STEALING_POLICY ALL_TASK_STEALING_ALLOWED
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
@@ -2892,12 +2895,16 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   //ME1
   kmp_uint8 th_cpu; // cpu identifier
   //PERF
-  kmp_uint8 th_counters_active = 0; // Flag to indicate if counters are active
+
   kmp_uint8 th_perf_init_flag = 0;
+  #if !PERF_DISABLE
+  kmp_uint8 th_counters_active = 0; // Flag to indicate if counters are active
   kmp_int32 th_counter_cycles;
   kmp_int32 th_counter_cachemiss;
+
   #if DEBUG_PRINT_TASK_INFO
   kmp_int32 th_counter_instructions;
+  #endif
   #endif
 
 
