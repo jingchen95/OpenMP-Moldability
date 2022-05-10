@@ -91,7 +91,7 @@
 
 // Sets different stealing modes between clusters
 #define ALL_TASK_STEALING_ALLOWED 0 // allows for all threads to steal from eachother
-#define NO_TASKLOOP_STEALING 1 // disallowes taskloop stealing between clusters but allow tasks to be stolen // Not working atm
+#define NO_TASKLOOP_STEALING 1 // disallowes taskloop stealing between clusters but allow tasks to be stolen
 #define NO_TASK_STEALING 2 //Disables all task stealing between clusters
 
 // Configs
@@ -129,8 +129,8 @@
 #define CLUSTER_UNASSIGNED CLUSTER_AMOUNT+1
 
 // AI values to categories task types, in the scale of AI*100
-#define AI_CPU_LIMIT 1150 // Everything above this value is set as a CPU task
-#define AI_CACHE_LIMIT 523 // Everything above up to and including AI_CPU_LIMIT is set as a CACHE task
+#define AI_CPU_LIMIT 180 // Everything above this value is set as a CPU task
+#define AI_CACHE_LIMIT 26 // Everything above up to and including AI_CPU_LIMIT is set as a CACHE task
 //#define AI_MEMORY_LIMIT 500 //Not used, everything below cache limit
 
 #define TASK_SUCCESSFULLY_SCHEDULED 1
@@ -2649,6 +2649,7 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
 
   //ME1
   kmp_uint32 td_unique_tid;
+  kmp_uint8 td_no_steal;
   kmp_uint8 td_taskwidth = 1;
   kmp_int8 td_cluster;
   kmp_uint8 td_task_type;

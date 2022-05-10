@@ -670,8 +670,8 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
       read(thread->th.th_counter_cycles, &current_cycles, sizeof(current_cycles));
 
       #if DEBUG_PRINT_TASK_INFO
-      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
       kmp_uint64 current_instructions = 0;
+      read(thread->th.th_counter_instructions, &current_instructions, sizeof(current_instructions));
       current_task->td_instructions_prev += (current_instructions - current_task->td_instructions_start);
       taskdata->td_instructions_start = current_instructions;
       #endif
@@ -3162,8 +3162,13 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   taskdata = victim_td->td.td_deque[victim_td->td.td_deque_head];
 
   //ME1
+  if (taskdata->td_no_steal){
+    __kmp_release_bootstrap_lock(&victim_td->td.td_deque_lock);
+    return NULL;
+  }
   #if TASK_STEALING_POLICY == NO_TASKLOOP_STEALING
   if(taskdata->td_cluster == CLUSTER_UNASSIGNED && thread->th.th_cluster != taskdata->td_cluster){
+    __kmp_release_bootstrap_lock(&victim_td->td.td_deque_lock);
     return NULL;
   }
   #endif
@@ -4474,7 +4479,8 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
      }
      */
     int width_index = width - 1;
-
+    //printf("Number of entries in cluster %d = %d, with width = %d\n", cluster, kmp_sched_p->cluster_tid_entries[cluster], width);
+    if (kmp_sched_p->cluster_tid_entries[cluster] < width) return;
     // TODO fix width associated variables, for example if the width is 4, await 4 results before adding etc.
 
     /*
@@ -4483,7 +4489,7 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
     */
 
     // No previous record, just add the value
-    if (kmp_perf_p->execution_times[cluster][tasktype][width_index] == 0){
+    if (kmp_perf_p->execution_times[cluster][tasktype][width_index] < 2){
         kmp_perf_p->execution_times[cluster][tasktype][width_index] = execution_time;
     }
     // Previous record exist, calculate a weighted value
@@ -4579,13 +4585,13 @@ static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid){
 }
 
 // returns the best thread candidate on given cluster
-static kmp_uint8 __kmp_schedule_thread(kmp_info_t *thread, kmp_uint8 cluster, kmp_int32 tid){
-
+static kmp_uint8 __kmp_schedule_thread(kmp_task_t *task, kmp_info_t *thread, kmp_uint8 cluster, kmp_int32 tid){
     // We now have the optimal cluster
     // schedule task on optimal thread right now picks the first sleeping thread it finds
     // If unable to find a sleeping thread, schedule task on yourself
     for (int i = 0; i < kmp_sched_p->cluster_tid_entries[cluster]; i++){
         if (kmp_sched_p->thread_active[cluster][i] == THREAD_SLEEP){
+            KMP_TASK_TO_TASKDATA(task)->td_no_steal = 1;
             return kmp_sched_p->cluster_tids[cluster][i]; // return first available thread
         }
     }
@@ -4671,7 +4677,6 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
 
             ++cluster_width_max;
             for(kmp_int32 cluster_width = 1; cluster_width < cluster_width_max; cluster_width++) {
-
                 // the idle power consumption is shared between current cluster and the idle clusters.
                 kmp_uint32 idle_power = kmp_sched_p->idle_power[curr_cluster];
                 kmp_uint8 number_active_cores[CLUSTER_AMOUNT] = {0};
@@ -4762,13 +4767,15 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     else{
         // TODO If tasktype is unknown, select fastest? cluster for identification
         // TODO Change to max number of clusters...
-        optimal_cluster = CLUSTER_A;
-        optimal_cluster_width = 4;
+        optimal_cluster = CLUSTER_B;
+        optimal_cluster_width = 2;
     }
     //printf("optimal_cluster_width = %d\n", optimal_cluster_width);
     //TODO Move this out to its own function, should return the optimal cluster and width instead
     taskdata->td_taskwidth = optimal_cluster_width;
     taskdata->td_cluster = optimal_cluster;
+    // Used to "distribute cluster widths with same task type"
+    if (minimum_energy == 0) __kmp_performance_model_add(optimal_cluster, task_type, 1, optimal_cluster_width);
 
 #if TEST_DIFFERENT_WIDTH
     static int width = 1;
@@ -4930,7 +4937,10 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   }
     // Taskloop task, find thread to schedule on
   else{
-      tid_sched = __kmp_schedule_thread(thread, taskdata->td_cluster, tid);
+      tid_sched = __kmp_schedule_thread(task, thread, taskdata->td_cluster, tid);
+      #if DEBUG_PRINT_TASK_INFO
+      printf("Taskloop task, recommend tid to schedule on: %d\n", tid_sched);
+      #endif
   }
 
   if (tid_sched == tid) {
@@ -4955,6 +4965,7 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
   current = thread_sched->th.th_current_task;
 
   if (!__kmp_task_is_allowed(sched_gtid, 1, taskdata, current)){
+      taskdata->td_no_steal = 0;
 #if DEBUG_PRINT_THREAD_INFO
       printf("Task not allowed for thread %d\n", tid_sched);
 #endif
@@ -4974,7 +4985,7 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
     return  TASK_SUCCESSFULLY_SCHEDULED;
 
   }
-
+  taskdata->td_no_steal = 0;
   return TASK_SCHEDULE_SELF;
 }
 // ME2
@@ -5780,7 +5791,7 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
     __kmp_taskloop_mapping(thread, task, tid, tc + 1);
 #if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
       printf("Taskloop number = %d, Cluster = %d, Number of tasks recommended = %hhu\n",
-       taskdata->td_task_id, current_task->td_cluster, taskdata->td_taskwidth);
+       taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
 #endif
     grainsize = taskdata->td_taskwidth;
     //TODO need to calculate max allowed grainsize here
