@@ -1676,6 +1676,7 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
   //ME1
   taskdata->td_cluster = CLUSTER_UNASSIGNED;
   taskdata->td_taskwidth = 1;
+  taskdata->td_no_steal = 0;
   // debug variable for task ID
   //global_taskcounter += 1;
   //taskdata->td_task_id = global_taskcounter;
@@ -3120,9 +3121,7 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   victim_td = &threads_data[victim_tid];
 
   //ME1
-  #if TASK_STEALING_POLICY
   kmp_info_t *thread = __kmp_threads[gtid];
-  #endif
 
   #if TASK_STEALING_POLICY == NO_TASK_STEALING
   if(thread->th.th_cluster != victim_thr->th.th_cluster) return NULL;
@@ -3161,11 +3160,14 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   current = __kmp_threads[gtid]->th.th_current_task;
   taskdata = victim_td->td.td_deque[victim_td->td.td_deque_head];
 
+
   //ME1
-  if (taskdata->td_no_steal){
+  
+  if (taskdata->td_no_steal && thread->th.th_cluster != victim_thr->th.th_cluster){
     __kmp_release_bootstrap_lock(&victim_td->td.td_deque_lock);
     return NULL;
   }
+  
   #if TASK_STEALING_POLICY == NO_TASKLOOP_STEALING
   if(taskdata->td_cluster == CLUSTER_UNASSIGNED && thread->th.th_cluster != taskdata->td_cluster){
     __kmp_release_bootstrap_lock(&victim_td->td.td_deque_lock);
@@ -4489,7 +4491,7 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
     */
 
     // No previous record, just add the value
-    if (kmp_perf_p->execution_times[cluster][tasktype][width_index] < 2){
+    if (kmp_perf_p->execution_times[cluster][tasktype][width_index] == 0){
         kmp_perf_p->execution_times[cluster][tasktype][width_index] = execution_time;
     }
     // Previous record exist, calculate a weighted value
@@ -4775,7 +4777,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     taskdata->td_taskwidth = optimal_cluster_width;
     taskdata->td_cluster = optimal_cluster;
     // Used to "distribute cluster widths with same task type"
-    if (minimum_energy == 0) __kmp_performance_model_add(optimal_cluster, task_type, 1, optimal_cluster_width);
+    //if (minimum_energy == 0) __kmp_performance_model_add(optimal_cluster, task_type, 1, optimal_cluster_width);
 
 #if TEST_DIFFERENT_WIDTH
     static int width = 1;
