@@ -1684,6 +1684,7 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
   //ME1
   taskdata->td_cluster = CLUSTER_UNASSIGNED;
   taskdata->td_taskwidth = 1;
+  taskdata->td_no_steal = 0;
   // debug variable for task ID
   //global_taskcounter += 1;
   //taskdata->td_task_id = global_taskcounter;
@@ -4499,7 +4500,7 @@ static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, k
     */
 
     // No previous record, just add the value
-    if (kmp_perf_p->execution_times[cluster][tasktype][width_index] < 2){
+    if (kmp_perf_p->execution_times[cluster][tasktype][width_index] == 0){
         kmp_perf_p->execution_times[cluster][tasktype][width_index] = execution_time;
     }
     // Previous record exist, calculate a weighted value
@@ -4788,8 +4789,6 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     //TODO Move this out to its own function, should return the optimal cluster and width instead
     taskdata->td_taskwidth = optimal_cluster_width;
     taskdata->td_cluster = optimal_cluster;
-    // Used to "distribute cluster widths with same task type"
-    if (minimum_energy == 0) __kmp_performance_model_add(optimal_cluster, task_type, 1, optimal_cluster_width);
 
 #if TEST_DIFFERENT_WIDTH
     static int width = 1;
