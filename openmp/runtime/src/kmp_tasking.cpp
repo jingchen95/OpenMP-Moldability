@@ -490,7 +490,9 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
                    TASK_DEQUE_SIZE(thread_data->td));
 
   //ME1
+   __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
   kmp_int32 schedule_result = __kmp_schedule_task(thread, task, tid);
+  __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
   kmp_int32 push_result;
   if (schedule_result  == TASK_SUCCESSFULLY_SCHEDULED){
       push_result = TASK_SUCCESSFULLY_PUSHED;
