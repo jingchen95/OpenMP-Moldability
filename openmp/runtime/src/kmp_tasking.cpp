@@ -4583,7 +4583,7 @@ static void __kmp_scheduler_init(kmp_info_t *thread){
     kmp_sched_p->idle_power[CLUSTER_A] = CLUSTER_A_POWER_IDLE;
 
 #ifdef CLUSTER_B_ACTIVE
-    kmp_sched_p->idle_power[CLUSTER_B] = CLUSTER_A_POWER_IDLE;
+    kmp_sched_p->idle_power[CLUSTER_B] = CLUSTER_B_POWER_IDLE;
 #endif
 }
 
