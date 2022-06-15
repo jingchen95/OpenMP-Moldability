@@ -3359,6 +3359,7 @@ static inline int __kmp_execute_tasks_template(
                       tid = thread->th.th_info.ds.ds_tid;
 
   //ME1
+  // Locks and mutex for the exponential sleep, used to let threads wake up other threads
   std::condition_variable cv;
   std::mutex cv_m;
   //ME2
@@ -3386,6 +3387,8 @@ static inline int __kmp_execute_tasks_template(
   KMP_DEBUG_ASSERT(*unfinished_threads >= 0);
 
   //ME1
+  // Init function call, only called once,
+  // TODO Probably a stupid place to have it, find a better
   if (thread->th.th_perf_init_flag == 0) __kmp_perf_init_counters(thread);
   //ME2
 

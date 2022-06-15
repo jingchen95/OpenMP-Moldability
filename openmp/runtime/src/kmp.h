@@ -64,25 +64,33 @@
 
 //ME1
 
+// Used in kmp_affinity.cpp to force HWLOC to reckognise all cores on the TX2
 #define TX2 1
- 
+
+// Debugging, forces taskloop splits in range from 1 to max number of threads,
 #define TEST_DIFFERENT_WIDTH 0
+// Exports taskloop, performance table for one task (quite limited) to a file
 #define EXPORT_DATA 0
+// Exports the performance table entry (or interpolation prediction if enabled)
+// together with the actual execution time
 #define MEASURE_ACCURACY 0
 
-#define NONE 0
+// Interpolation settings
+#define NONE 0 // No interpolation
 #define POLYNOMIAL 1
 #define PMNF 2
 #define ONLINE 3
 // INTERPOLATION should have one of the 4 values above
 #define INTERPOLATION NONE
 
+// Offline model
 #if INTERPOLATION == PMNF
 #define memory_interpolation(x) 89.65789787240755 + -26.531804044307375 * pow(log2(x), 0.5)
 #define cpu_interpolation(x) 87.35240664962824 + -22.239293769083655 * log2(x)
 #define cache_interpolation(x) 75.70914797557946 + -13.81904977590176 * log2(x)
 #endif
 
+// Offline model
 #if INTERPOLATION == POLYNOMIAL
 #define memory_interpolation(x)  -0.3788*pow(x, 3) + 6.447 *pow(x, 2) - 36.89 * x + 118.2
 #define cpu_interpolation(x) -0.4318*pow(x, 3) + 7.574*pow(x, 2) - 46.45 * x + 129.7;
@@ -95,15 +103,22 @@
 #define NO_TASK_STEALING 2 //Disables all task stealing between clusters
 
 // Configs
-#define TASK_STEALING_POLICY ALL_TASK_STEALING_ALLOWED
-#define SLEEP_DURATION 10us
-#define PERF_DISABLE 0
+#define TASK_STEALING_POLICY ALL_TASK_STEALING_ALLOWED // Should be one of the three above
+#define SLEEP_DURATION 10us // Base sleep duration
+#define PERF_DISABLE 0 // 0 to enable perf, 1 to enable
+// Only change the first variable,
+// 1 To disable the performance counters when no unknown task types are executing
+// 0 To always have perf active
 #define PERF_DYNAMIC_ON 1 && !PERF_DISABLE
+// Exponential sleep toggle, 0 disables it, 1 activates it
 #define SLEEP_DISABLED 0
 
-#define MAX_STEAL_ATTEMPTS 5
-#define MAX_SLEEP_SHIFT 10 //2**10 = 1024 ms
+#define MAX_STEAL_ATTEMPTS 5 // Number of steal attempts before entering sleep
+// Maximum sleep time in terms of, SLEEP_DURATION * (2 ** x), where x is the value set here
+// For example, if base sleep is 1ms and the value is set to 10, then the max sleep duration is 1024ms
+#define MAX_SLEEP_SHIFT 10
 
+// Debugging prints
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
@@ -114,16 +129,17 @@
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
-#define CLUSTER_AMOUNT 2// Number of clusters
+#define CLUSTER_AMOUNT 2 // Number of clusters
 #define CLUSTER_B_ACTIVE 1
 #define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 2 // threads on cluster B
 
 #define CLUSTER_SIZE MAX(CLUSTER_A_SIZE, CLUSTER_B_SIZE)
 
+// Cluster definitions...
 #define CLUSTER_A 0
 #define CLUSTER_B 1
-//TODO IS the flops accurate for TX2?
+
 #define FLOPS_PER_CYCLE 30 // Must be set per machine, scale of flops * 100
 
 #define CLUSTER_UNASSIGNED CLUSTER_AMOUNT+1
@@ -133,11 +149,12 @@
 #define AI_CACHE_LIMIT 26 // Everything above up to and including AI_CPU_LIMIT is set as a CACHE task
 //#define AI_MEMORY_LIMIT 500 //Not used, everything below cache limit
 
+// Scheduling definitions
 #define TASK_SUCCESSFULLY_SCHEDULED 1
 #define INVOKE_NOW 2
 #define TASK_SCHEDULE_SELF 3
 
-
+// Task type definitions
 #define TASK_TYPES 3
 #define TASK_CPU 0
 #define TASK_CACHE 1
@@ -145,36 +162,40 @@
 #define TASK_UNDEFINED 3
 #define TASK_PATTERN 4
 
+// Original plan was to read/calculate frequency online and use power values from tables
+// Currently only using the HIGH_FREQ_POWER in the task mapping algorithm
 #define LOW_FREQ_POWER 0
 #define HIGH_FREQ_POWER 1
+
+// Used in combination with DEBUG_PRINT_POWER_VALUES to print the values in the power module
+// 2 means that it has power values for 2 different frequencies
 #define CLUSTER_POWER_RUNTIME_SAMPLES 2
 
+// Idle power value
 #define CLUSTER_A_POWER_IDLE 152
 
+// Runtime frequency values gathered offline
 #define CLUSTER_A_POWER_RUNTIME_CPU_LOWS {304, 380, 456, 532}
-#define CLUSTER_A_POWER_RUNTIME_CPU_HIGHS {1217, 1976, 2812, 3644} 
-//TODO Temporary values, update
+#define CLUSTER_A_POWER_RUNTIME_CPU_HIGHS {1217, 1976, 2812, 3644}
 #define CLUSTER_A_POWER_RUNTIME_CACHE_HIGHS {1215, 1706, 2168, 2629}
 #define CLUSTER_A_POWER_RUNTIME_CACHE_LOWS {345, 380, 455, 532}
-
 #define CLUSTER_A_POWER_RUNTIME_MEMORY_LOWS {363, 379, 455, 532}
 #define CLUSTER_A_POWER_RUNTIME_MEMORY_HIGHS {1213, 1591, 1892, 2194}
 
-
+// Idle power value
 #define CLUSTER_B_POWER_IDLE 76
 
+// Runtime frequency values gathered offline
 #define CLUSTER_B_POWER_RUNTIME_CPU_LOWS {456, 609}
 #define CLUSTER_B_POWER_RUNTIME_CPU_HIGHS {2275, 4320}
-//TODO Temporary values, update
 #define CLUSTER_B_POWER_RUNTIME_CACHE_HIGHS {1955, 3518}
-#define CLUSTER_B_POWER_RUNTIME_CACHE_LOWS {402, 554} 
-
+#define CLUSTER_B_POWER_RUNTIME_CACHE_LOWS {402, 554}
 #define CLUSTER_B_POWER_RUNTIME_MEMORY_LOWS {379, 531}
 #define CLUSTER_B_POWER_RUNTIME_MEMORY_HIGHS {1818, 3174}
 
+// Thread status definition
 #define THREAD_AWAKE 1
 #define THREAD_SLEEP 0
-
 //ME2
 
 #define TASK_NOT_PUSHED 1
@@ -454,7 +475,6 @@ typedef enum task_definition{
     memory_bound,
     undefined
 }task_definition_t;
-
 //ME2
 
 enum kmp_state_timer {
@@ -2649,15 +2669,16 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
 
   //ME1
   kmp_uint32 td_unique_tid;
-  kmp_uint8 td_no_steal;
-  kmp_uint8 td_taskwidth = 1;
-  kmp_int8 td_cluster;
-  kmp_uint8 td_task_type;
+  kmp_uint8 td_no_steal; // flag for if the task is allowed to be stolen or not
+  kmp_uint8 td_taskwidth = 1; // Width of current task, for example if a taskloop is split into 4, it will be 4...
+  kmp_int8 td_cluster; // Schedules sets this to the cluster which is deemed optimal
+  kmp_uint8 td_task_type; // Task type...
 #ifdef MEASURE_ACCURACY
   kmp_uint32 td_predicted_exectime;
 #endif
+  // Start variables for counters and "buffer" variables if the task is executed in segments
   kmp_real64 td_starttime; // Stores the current task segment start time.
-  kmp_real64 td_previous_exectime; // Stores previous execution time of task if it has been interrupted.
+  kmp_real64 td_previous_exectime; // Stores previous execution time of the task if it has been interrupted.
   //PERF related variables
   kmp_uint64 td_cycles_start;
   kmp_uint64 td_cycles_prev;
@@ -2900,19 +2921,19 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint8 th_perf_init_flag = 0;
   #if !PERF_DISABLE
   kmp_uint8 th_counters_active = 0; // Flag to indicate if counters are active
-  kmp_int32 th_counter_cycles;
-  kmp_int32 th_counter_cachemiss;
+  kmp_int32 th_counter_cycles; // file descriptor for perf, used to gather cycles
+  kmp_int32 th_counter_cachemiss; // file descriptor for perf, used to gather cache misses
 
   #if DEBUG_PRINT_TASK_INFO
-  kmp_int32 th_counter_instructions;
+  kmp_int32 th_counter_instructions; // file descriptor for perf, used to gather instructions
   #endif
   #endif
 
 
   // TODO cluster currently hardcoded, fix for use with more then one cluster
-  // TODO Probably a better idea to store a hashmap with these variables instead of sticking them to the thread struct
-  kmp_uint8 th_cluster;
-  kmp_uint8 th_sched_pos;
+  // TODO Probably a better idea to store a hashmap with these variables instead of sticking them to the thread struct?
+  kmp_uint8 th_cluster; // cluster identifier
+  kmp_uint8 th_sched_pos; // thread id in the performance table, unique within a single cluster
 
   kmp_uint16 th_sleep_shift = 0;
   kmp_uint16 th_steal_attempts = 0;
