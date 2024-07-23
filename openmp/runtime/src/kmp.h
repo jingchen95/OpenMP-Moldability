@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/ioctl.h> //Used to control the perf counters
+#include <cfloat> // Include this header to use FLT_MAX
 //ME2
 
 /* #define BUILD_PARALLEL_ORDERED 1 */
@@ -113,7 +114,7 @@
 // Exponential sleep toggle, 0 disables it, 1 activates it
 #define SLEEP_DISABLED 0
 
-#define MAX_STEAL_ATTEMPTS 5 // Number of steal attempts before entering sleep
+#define MAX_STEAL_ATTEMPTS 100 // Number of steal attempts before entering sleep (original from master student: 5)
 // Maximum sleep time in terms of, SLEEP_DURATION * (2 ** x), where x is the value set here
 // For example, if base sleep is 1ms and the value is set to 10, then the max sleep duration is 1024ms
 #define MAX_SLEEP_SHIFT 10
@@ -130,7 +131,7 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
 #define CLUSTER_AMOUNT 2 // Number of clusters
-#define CLUSTER_B_ACTIVE 1
+#define CLUSTER_B_ACTIVE 1 // 1 if cluster B is active, 0 if not
 #define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 2 // threads on cluster B
 
@@ -162,6 +163,8 @@
 #define TASK_UNDEFINED 3
 #define TASK_PATTERN 4
 
+#define TASKLOOP_ID 20 // Add by Jing: taskloop id
+
 // Original plan was to read/calculate frequency online and use power values from tables
 // Currently only using the HIGH_FREQ_POWER in the task mapping algorithm
 #define LOW_FREQ_POWER 0
@@ -176,26 +179,35 @@
 
 // Runtime frequency values gathered offline
 #define CLUSTER_A_POWER_RUNTIME_CPU_LOWS {304, 380, 456, 532}
-#define CLUSTER_A_POWER_RUNTIME_CPU_HIGHS {1217, 1976, 2812, 3644}
-#define CLUSTER_A_POWER_RUNTIME_CACHE_HIGHS {1215, 1706, 2168, 2629}
+// #define CLUSTER_A_POWER_RUNTIME_CPU_HIGHS {1217, 1976, 2812, 3644}
+#define CLUSTER_A_POWER_RUNTIME_CPU_HIGHS {989, 1748, 2584, 3416} // Updated by Jing - 228
+// #define CLUSTER_A_POWER_RUNTIME_CACHE_HIGHS {1215, 1706, 2168, 2629}
+#define CLUSTER_A_POWER_RUNTIME_CACHE_HIGHS {987, 1478, 1940, 2401} // Updated by Jing - 228
 #define CLUSTER_A_POWER_RUNTIME_CACHE_LOWS {345, 380, 455, 532}
 #define CLUSTER_A_POWER_RUNTIME_MEMORY_LOWS {363, 379, 455, 532}
-#define CLUSTER_A_POWER_RUNTIME_MEMORY_HIGHS {1213, 1591, 1892, 2194}
+// #define CLUSTER_A_POWER_RUNTIME_MEMORY_HIGHS {1213, 1591, 1892, 2194}
+#define CLUSTER_A_POWER_RUNTIME_MEMORY_HIGHS {985, 1363, 1664, 1966} // Updated by Jing - 228
 
 // Idle power value
 #define CLUSTER_B_POWER_IDLE 76
 
 // Runtime frequency values gathered offline
 #define CLUSTER_B_POWER_RUNTIME_CPU_LOWS {456, 609}
-#define CLUSTER_B_POWER_RUNTIME_CPU_HIGHS {2275, 4320}
-#define CLUSTER_B_POWER_RUNTIME_CACHE_HIGHS {1955, 3518}
+// #define CLUSTER_B_POWER_RUNTIME_CPU_HIGHS {2275, 4320}
+#define CLUSTER_B_POWER_RUNTIME_CPU_HIGHS {2047, 4092} // Updated by Jing - 228
+// #define CLUSTER_B_POWER_RUNTIME_CACHE_HIGHS {1955, 3518}
+#define CLUSTER_B_POWER_RUNTIME_CACHE_HIGHS {1727, 3280} // Updated by Jing - 228
 #define CLUSTER_B_POWER_RUNTIME_CACHE_LOWS {402, 554}
 #define CLUSTER_B_POWER_RUNTIME_MEMORY_LOWS {379, 531}
-#define CLUSTER_B_POWER_RUNTIME_MEMORY_HIGHS {1818, 3174}
+// #define CLUSTER_B_POWER_RUNTIME_MEMORY_HIGHS {1818, 3174}
+#define CLUSTER_B_POWER_RUNTIME_MEMORY_HIGHS {1590, 2946} // Updated by Jing - 228
 
 // Thread status definition
 #define THREAD_AWAKE 1
 #define THREAD_SLEEP 0
+
+// Scheduler algorithm selection
+// #define ERASE_MOLDABILITY 0 // 0 to disable, 1 to enable the erase moldability algorithm
 //ME2
 
 #define TASK_NOT_PUSHED 1
@@ -2672,7 +2684,9 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   kmp_uint8 td_no_steal; // flag for if the task is allowed to be stolen or not
   kmp_uint8 td_taskwidth = 1; // Width of current task, for example if a taskloop is split into 4, it will be 4...
   kmp_int8 td_cluster; // Schedules sets this to the cluster which is deemed optimal
-  kmp_uint8 td_task_type; // Task type...
+  kmp_uint8 td_task_type; // Task type (3): compute-bound, memory-bound, cache-intensive
+  kmp_uint8 td_taskloop_id; // Taskloop id, used to identify the taskloop, same taskloop routine shares the same performance table
+  kmp_uint8 td_get_optimal; // Flag for if the taskloop has got the optimal schedule configuration
 #ifdef MEASURE_ACCURACY
   kmp_uint32 td_predicted_exectime;
 #endif
@@ -3193,6 +3207,10 @@ struct fortran_inx_info {
 struct kmp_performance {
     kmp_uint32 frequencies[CLUSTER_AMOUNT][CLUSTER_SIZE]; // Frequency for each core for current execution times
     kmp_uint32 execution_times[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_SIZE]; // predicted execution time for each task type
+    kmp_uint32 performance_table[TASKLOOP_ID][CLUSTER_AMOUNT][CLUSTER_SIZE]; // Add by Jing: Performance table for each taskloop
+    kmp_uint8 get_optimal[TASKLOOP_ID]; // Add by Jing: Flag for if the taskloop has got the optimal schedule configuration
+    kmp_uint8 optimal_cluster[TASKLOOP_ID]; // Add by Jing: Optimal scheduled cluster for each taskloop
+    kmp_uint8 optimal_width[TASKLOOP_ID]; // Add by Jing: Optimal scheduled width for each taskloop
 };
 
 struct kmp_scheduler {
@@ -3218,6 +3236,7 @@ struct kmp_scheduler {
           CLUSTER_A_POWER_RUNTIME_MEMORY_HIGHS
         }
       },
+#if CLUSTER_AMOUNT > 1
       { 
         {
           CLUSTER_B_POWER_RUNTIME_CPU_LOWS,
@@ -3232,6 +3251,7 @@ struct kmp_scheduler {
           CLUSTER_B_POWER_RUNTIME_MEMORY_HIGHS
         }
       }
+#endif
     };
     
      //TODO not finished
