@@ -130,8 +130,8 @@
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
-#define CLUSTER_AMOUNT 2 // Number of clusters
-#define CLUSTER_B_ACTIVE 1 // 1 if cluster B is active, 0 if not
+#define CLUSTER_AMOUNT 1 // Number of clusters
+#define CLUSTER_B_ACTIVE 0 // 1 if cluster B is active, 0 if not
 #define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 2 // threads on cluster B
 
