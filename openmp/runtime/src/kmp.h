@@ -123,14 +123,14 @@
 #define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
-#define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 0
-#define DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO 0
-#define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0
+#define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
+#define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_POWER_VALUES 0
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
-#define CLUSTER_AMOUNT 1 // Number of clusters
+#define CLUSTER_AMOUNT  1 // Number of clusters
 #define CLUSTER_B_ACTIVE 0 // 1 if cluster B is active, 0 if not
 #define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 2 // threads on cluster B
@@ -2687,6 +2687,7 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   kmp_uint8 td_task_type; // Task type (3): compute-bound, memory-bound, cache-intensive
   kmp_uint8 td_taskloop_id; // Taskloop id, used to identify the taskloop, same taskloop routine shares the same performance table
   kmp_uint8 td_get_optimal; // Flag for if the taskloop has got the optimal schedule configuration
+  kmp_uint64 td_loop_iters; // Number of iterations in the taskloop
 #ifdef MEASURE_ACCURACY
   kmp_uint32 td_predicted_exectime;
 #endif
