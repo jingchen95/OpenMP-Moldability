@@ -2365,6 +2365,10 @@ void OMPClauseEnqueue::VisitOMPNumTasksClause(const OMPNumTasksClause *C) {
   Visitor->AddStmt(C->getNumTasks());
 }
 
+void OMPClauseEnqueue::VisitOMPCostClause(const OMPCostClause *C) {
+  Visitor->AddStmt(C->getCostExpr());
+}
+
 void OMPClauseEnqueue::VisitOMPHintClause(const OMPHintClause *C) {
   Visitor->AddStmt(C->getHint());
 }

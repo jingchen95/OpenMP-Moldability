@@ -92,6 +92,8 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
     return static_cast<const OMPGrainsizeClause *>(C);
   case OMPC_num_tasks:
     return static_cast<const OMPNumTasksClause *>(C);
+  case OMPC_cost:
+    return static_cast<const OMPCostClause *>(C);
   case OMPC_final:
     return static_cast<const OMPFinalClause *>(C);
   case OMPC_priority:
@@ -235,6 +237,7 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
   case OMPC_grainsize:
   case OMPC_nogroup:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_defaultmap:
   case OMPC_unknown:
@@ -300,6 +303,12 @@ OMPClause::child_range OMPNumTasksClause::used_children() {
   if (Stmt **C = getAddrOfExprAsWritten(getPreInitStmt()))
     return child_range(C, C + 1);
   return child_range(&NumTasks, &NumTasks + 1);
+}
+
+OMPClause::child_range OMPCostClause::used_children() {
+  if (Stmt **C = getAddrOfExprAsWritten(getPreInitStmt()))
+    return child_range(C, C + 1);
+  return child_range(&CostExpr, &CostExpr + 1);
 }
 
 OMPClause::child_range OMPFinalClause::used_children() {
@@ -1862,6 +1871,12 @@ void OMPClausePrinter::VisitOMPGrainsizeClause(OMPGrainsizeClause *Node) {
 void OMPClausePrinter::VisitOMPNumTasksClause(OMPNumTasksClause *Node) {
   OS << "num_tasks(";
   Node->getNumTasks()->printPretty(OS, nullptr, Policy, 0);
+  OS << ")";
+}
+
+void OMPClausePrinter::VisitOMPCostClause(OMPCostClause *Node) {
+  OS << "cost(";
+  Node->getCostExpr()->printPretty(OS, nullptr, Policy, 0);
   OS << ")";
 }
 

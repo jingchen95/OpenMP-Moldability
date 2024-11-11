@@ -114,6 +114,7 @@ struct OMPTaskDataTy final {
   SmallVector<DependData, 4> Dependences;
   llvm::PointerIntPair<llvm::Value *, 1, bool> Final;
   llvm::PointerIntPair<llvm::Value *, 1, bool> Schedule;
+  llvm::PointerIntPair<llvm::Value *, 1, bool> Cost;
   llvm::PointerIntPair<llvm::Value *, 1, bool> Priority;
   llvm::Value *Reductions = nullptr;
   unsigned NumberOfParts = 0;

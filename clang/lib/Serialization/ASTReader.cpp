@@ -11798,6 +11798,9 @@ OMPClause *OMPClauseReader::readClause() {
   case llvm::omp::OMPC_num_tasks:
     C = new (Context) OMPNumTasksClause();
     break;
+  case llvm::omp::OMPC_cost:
+    C = new (Context) OMPCostClause();
+    break;
   case llvm::omp::OMPC_hint:
     C = new (Context) OMPHintClause();
     break;
@@ -12537,6 +12540,12 @@ void OMPClauseReader::VisitOMPGrainsizeClause(OMPGrainsizeClause *C) {
 void OMPClauseReader::VisitOMPNumTasksClause(OMPNumTasksClause *C) {
   VisitOMPClauseWithPreInit(C);
   C->setNumTasks(Record.readSubExpr());
+  C->setLParenLoc(Record.readSourceLocation());
+}
+
+void OMPClauseReader::VisitOMPCostClause(OMPCostClause *C) {
+  VisitOMPClauseWithPreInit(C);
+  C->setCostExpr(Record.readSubExpr());
   C->setLParenLoc(Record.readSourceLocation());
 }
 

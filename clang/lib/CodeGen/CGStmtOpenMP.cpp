@@ -6086,6 +6086,7 @@ static void emitOMPAtomicExpr(CodeGenFunction &CGF, OpenMPClauseKind Kind,
   case OMPC_grainsize:
   case OMPC_nogroup:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_dist_schedule:
   case OMPC_defaultmap:
@@ -7202,6 +7203,14 @@ void CodeGenFunction::EmitOMPTaskLoopBasedDirective(const OMPLoopDirective &S) {
     // num_tasks clause
     Data.Schedule.setInt(/*IntVal=*/true);
     Data.Schedule.setPointer(EmitScalarExpr(Clause->getNumTasks()));
+  }
+
+  // Check if we have cost clause associated with the directive.
+  if (const auto *Clause = S.getSingleClause<OMPCostClause>()) {
+    Data.Cost.setInt(/*IntVal=*/true);
+    Data.Cost.setPointer(EmitScalarExpr(Clause->getCostExpr()));
+  }else {
+    Data.Cost.setInt(/*IntVal=*/false);
   }
 
   auto &&BodyGen = [CS, &S](CodeGenFunction &CGF, PrePostActionTy &) {

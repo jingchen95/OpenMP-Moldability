@@ -3595,6 +3595,14 @@ bool RecursiveASTVisitor<Derived>::VisitOMPNumTasksClause(
 }
 
 template <typename Derived>
+bool RecursiveASTVisitor<Derived>::VisitOMPCostClause(
+    OMPCostClause *C) {
+  TRY_TO(VisitOMPClauseWithPreInit(C));
+  TRY_TO(TraverseStmt(C->getCostExpr()));
+  return true;
+}
+
+template <typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPHintClause(OMPHintClause *C) {
   TRY_TO(TraverseStmt(C->getHint()));
   return true;

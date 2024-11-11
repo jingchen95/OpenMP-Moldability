@@ -6644,6 +6644,12 @@ void OMPClauseWriter::VisitOMPNumTasksClause(OMPNumTasksClause *C) {
   Record.AddSourceLocation(C->getLParenLoc());
 }
 
+void OMPClauseWriter::VisitOMPCostClause(OMPCostClause *C) {
+  VisitOMPClauseWithPreInit(C);
+  Record.AddStmt(C->getCostExpr());
+  Record.AddSourceLocation(C->getLParenLoc());
+}
+
 void OMPClauseWriter::VisitOMPHintClause(OMPHintClause *C) {
   Record.AddStmt(C->getHint());
   Record.AddSourceLocation(C->getLParenLoc());

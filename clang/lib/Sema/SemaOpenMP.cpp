@@ -6326,6 +6326,7 @@ StmtResult Sema::ActOnOpenMPExecutableDirective(
         break;
       case OMPC_grainsize:
       case OMPC_num_tasks:
+      case OMPC_cost:
       case OMPC_final:
       case OMPC_priority:
       case OMPC_novariants:
@@ -13815,6 +13816,9 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind, Expr *Expr,
   case OMPC_num_tasks:
     Res = ActOnOpenMPNumTasksClause(Expr, StartLoc, LParenLoc, EndLoc);
     break;
+  case OMPC_cost:
+    Res = ActOnOpenMPCostClause(Expr, StartLoc, LParenLoc, EndLoc);
+    break;
   case OMPC_hint:
     Res = ActOnOpenMPHintClause(Expr, StartLoc, LParenLoc, EndLoc);
     break;
@@ -14564,6 +14568,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     break;
   case OMPC_grainsize:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_final:
   case OMPC_priority:
     switch (DKind) {
@@ -15177,6 +15182,7 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(
   case OMPC_grainsize:
   case OMPC_nogroup:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_dist_schedule:
   case OMPC_defaultmap:
@@ -15484,6 +15490,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprWithArgClause(
   case OMPC_grainsize:
   case OMPC_nogroup:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_unknown:
   case OMPC_uniform:
@@ -15741,6 +15748,7 @@ OMPClause *Sema::ActOnOpenMPClause(OpenMPClauseKind Kind,
   case OMPC_priority:
   case OMPC_grainsize:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_dist_schedule:
   case OMPC_defaultmap:
@@ -16294,6 +16302,7 @@ OMPClause *Sema::ActOnOpenMPVarListClause(
   case OMPC_grainsize:
   case OMPC_nogroup:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_dist_schedule:
   case OMPC_defaultmap:
@@ -20918,6 +20927,26 @@ OMPClause *Sema::ActOnOpenMPNumTasksClause(Expr *NumTasks,
 
   return new (Context) OMPNumTasksClause(ValExpr, HelperValStmt, CaptureRegion,
                                          StartLoc, LParenLoc, EndLoc);
+}
+
+OMPClause *Sema::ActOnOpenMPCostClause(Expr *CostExpr,
+                                       SourceLocation StartLoc,
+                                       SourceLocation LParenLoc,
+                                       SourceLocation EndLoc) {
+  Expr *ValExpr = CostExpr;
+  Stmt *HelperValStmt = nullptr;
+  OpenMPDirectiveKind CaptureRegion = OMPD_unknown;
+
+  // OpenMP [2.9.2, taskloop Construct]
+  // The parameter of the cost clause must be a positive integer expression.
+  if (!isNonNegativeIntegerValue(
+          ValExpr, *this, OMPC_cost,
+          /*StrictlyPositive=*/true, /*BuildCapture=*/true,
+          DSAStack->getCurrentDirective(), &CaptureRegion, &HelperValStmt))
+    return nullptr;
+
+  return new (Context) OMPCostClause(ValExpr, HelperValStmt, CaptureRegion,
+                                      StartLoc, LParenLoc, EndLoc);
 }
 
 OMPClause *Sema::ActOnOpenMPHintClause(Expr *Hint, SourceLocation StartLoc,

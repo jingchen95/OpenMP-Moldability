@@ -835,6 +835,11 @@ void OMPClauseProfiler::VisitOMPNumTasksClause(const OMPNumTasksClause *C) {
   if (C->getNumTasks())
     Profiler->VisitStmt(C->getNumTasks());
 }
+void OMPClauseProfiler::VisitOMPCostClause(const OMPCostClause *C) {
+  VistOMPClauseWithPreInit(C);
+  if (C->getCostExpr())
+    Profiler->VisitStmt(C->getCostExpr());
+}
 void OMPClauseProfiler::VisitOMPHintClause(const OMPHintClause *C) {
   if (C->getHint())
     Profiler->VisitStmt(C->getHint());

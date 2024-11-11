@@ -2009,6 +2009,16 @@ public:
                                                EndLoc);
   }
 
+  /// Build a new OpenMP 'cost' clause.
+  /// 
+  /// By default, performs semantic analysis to build the new statement.
+  /// Subclasses may override this routine to provide different behavior.
+  OMPClause *RebuildOMPCostClause(Expr *Cost, SourceLocation StartLoc,
+                                  SourceLocation LParenLoc,
+                                  SourceLocation EndLoc) {
+    return getSema().ActOnOpenMPCostClause(Cost, StartLoc, LParenLoc, EndLoc);
+  }
+
   /// Build a new OpenMP 'hint' clause.
   ///
   /// By default, performs semantic analysis to build the new statement.
@@ -10111,6 +10121,16 @@ TreeTransform<Derived>::TransformOMPNumTasksClause(OMPNumTasksClause *C) {
   if (E.isInvalid())
     return nullptr;
   return getDerived().RebuildOMPNumTasksClause(
+      E.get(), C->getBeginLoc(), C->getLParenLoc(), C->getEndLoc());
+}
+
+template <typename Derived>
+OMPClause *
+TreeTransform<Derived>::TransformOMPCostClause(OMPCostClause *C) {
+  ExprResult E = getDerived().TransformExpr(C->getCostExpr());
+  if (E.isInvalid())
+    return nullptr;
+  return getDerived().RebuildOMPCostClause(
       E.get(), C->getBeginLoc(), C->getLParenLoc(), C->getEndLoc());
 }
 

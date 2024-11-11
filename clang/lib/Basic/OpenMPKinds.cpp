@@ -181,6 +181,7 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind, StringRef Str,
   case OMPC_grainsize:
   case OMPC_nogroup:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_uniform:
   case OMPC_use_device_ptr:
@@ -447,6 +448,7 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_grainsize:
   case OMPC_nogroup:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_uniform:
   case OMPC_use_device_ptr:

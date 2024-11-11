@@ -6347,6 +6347,73 @@ public:
   }
 };
 
+/// This represents 'cost' clause in the '#pragma omp ...'
+/// directive.
+///
+/// \code
+/// #pragma omp taskloop cost(a * b * c)
+/// \endcode
+/// In this example directive '#pragma omp taskloop' has clause 'cost'
+/// with single expression 'a * b * c'.
+class OMPCostClause : public OMPClause, public OMPClauseWithPreInit {
+  friend class OMPClauseReader;
+
+  /// Location of '('.
+  SourceLocation LParenLoc;
+
+  /// Safe iteration space distance.
+  Stmt *CostExpr = nullptr;
+
+  /// Set safelen.
+  void setCostExpr(Expr *Cost) { CostExpr = Cost; }
+
+public:
+  /// Build 'cost' clause.
+  ///
+  /// \param Cost Expression associated with this clause.
+  /// \param HelperStmt Helper statement for the construct.
+  /// \param CaptureRegion Innermost OpenMP region where expressions in this
+  /// clause must be captured.
+  /// \param StartLoc Starting location of the clause.
+  /// \param EndLoc Ending location of the clause.
+  /// \param LParenLoc Location of '('.
+  OMPCostClause(Expr *Cost, Stmt *HelperStmt, OpenMPDirectiveKind CaptureRegion,
+                SourceLocation StartLoc, SourceLocation LParenLoc, SourceLocation EndLoc)
+      : OMPClause(llvm::omp::OMPC_cost, StartLoc, EndLoc),
+        OMPClauseWithPreInit(this), LParenLoc(LParenLoc), CostExpr(Cost) {
+    setPreInitStmt(HelperStmt, CaptureRegion);
+  }
+  /// Build an empty clause.
+  explicit OMPCostClause()
+      : OMPClause(llvm::omp::OMPC_cost, SourceLocation(), SourceLocation()),
+        OMPClauseWithPreInit(this) {}
+
+  /// Sets the location of '('.
+  void setLParenLoc(SourceLocation Loc) { LParenLoc = Loc; }
+
+  /// Returns the location of '('.
+  SourceLocation getLParenLoc() const { return LParenLoc; }
+
+  /// Return the cost expression.
+  Expr *getCostExpr() const { return cast_or_null<Expr>(CostExpr); }
+
+  child_range children() { return child_range(&CostExpr, &CostExpr + 1); }
+
+  const_child_range children() const {
+    return const_child_range(&CostExpr, &CostExpr + 1);
+  }
+
+  child_range used_children();
+  const_child_range used_children() const {
+    auto Children = const_cast<OMPCostClause *>(this)->used_children();
+    return const_child_range(Children.begin(), Children.end());
+  }
+
+  static bool classof(const OMPClause *T) {
+    return T->getClauseKind() == llvm::omp::OMPC_cost;
+  }
+};
+
 /// This represents 'hint' clause in the '#pragma omp ...' directive.
 ///
 /// \code

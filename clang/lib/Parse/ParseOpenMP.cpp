@@ -3126,6 +3126,7 @@ OMPClause *Parser::ParseOpenMPClause(OpenMPDirectiveKind DKind,
   case OMPC_priority:
   case OMPC_grainsize:
   case OMPC_num_tasks:
+  case OMPC_cost:
   case OMPC_hint:
   case OMPC_allocator:
   case OMPC_depobj:

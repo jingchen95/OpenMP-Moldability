@@ -5301,7 +5301,15 @@ void CGOpenMPRuntime::emitTaskLoopCall(CodeGenFunction &CGF, SourceLocation Loc,
     CGF.EmitNullInitialization(RedLVal.getAddress(CGF),
                                CGF.getContext().VoidPtrTy);
   }
-  enum { NoSchedule = 0, Grainsize = 1, NumTasks = 2 };
+
+  // Get cost of taskloop.
+  // if (Data.Cost.getInt()) { //if it is true
+  //   CGF.Builder.CreateIntCast(Data.Cost.getPointer(), CGF.Int64Ty, /*isSigned=*/false);
+  // } else {
+  //   llvm::ConstantInt::get(CGF.Int64Ty, /*V=*/0);
+  // }
+
+  enum { NoSchedule = 0, Grainsize = 1, NumTasks = 2};
   llvm::Value *TaskArgs[] = {
       UpLoc,
       ThreadID,
@@ -5314,11 +5322,15 @@ void CGOpenMPRuntime::emitTaskLoopCall(CodeGenFunction &CGF, SourceLocation Loc,
           CGF.IntTy, 1), // Always 1 because taskgroup emitted by the compiler
       llvm::ConstantInt::getSigned(
           CGF.IntTy, Data.Schedule.getPointer()
-                         ? Data.Schedule.getInt() ? NumTasks : Grainsize
-                         : NoSchedule),
+                        ? (Data.Schedule.getInt() ? NumTasks : Grainsize)
+                        : NoSchedule),
       Data.Schedule.getPointer()
           ? CGF.Builder.CreateIntCast(Data.Schedule.getPointer(), CGF.Int64Ty,
                                       /*isSigned=*/false)
+          : llvm::ConstantInt::get(CGF.Int64Ty, /*V=*/0),
+      Data.Cost.getInt() 
+          ? CGF.Builder.CreateIntCast(Data.Cost.getPointer(), CGF.Int64Ty, 
+          /*isSigned=*/false) 
           : llvm::ConstantInt::get(CGF.Int64Ty, /*V=*/0),
       Result.TaskDupFn ? CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
                              Result.TaskDupFn, CGF.VoidPtrTy)
