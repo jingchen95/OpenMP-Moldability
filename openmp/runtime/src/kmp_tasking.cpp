@@ -23,8 +23,11 @@
 #endif
 using namespace std::chrono_literals;
 
+#if COST_CLAUSE
+std::unordered_map<kmp_routine_entry_t, task_definition_t> task_map;
+#else
 std::unordered_map<kmp_routine_entry_t, std::unordered_map<kmp_uint64, task_definition_t>> task_map;
-// std::unordered_map<kmp_routine_entry_t, task_definition_t> task_map;
+#endif
 std::mutex task_map_m;
 
 std::unordered_map<kmp_routine_entry_t, std::unordered_map<kmp_uint64, std::atomic<int>>> taskloop_map;
@@ -42,6 +45,8 @@ static std::atomic<int> task_loop_id(0); // Define task loop ID as atomic intege
 bool scheduler_init = false; // Flag to check if the scheduler has been initialized
 bool performance_model_init = false; // Flag to check if the performance model has been initialized
 std::mutex init_mutex; // Mutex for synchronization
+
+std::atomic<int> last_thread(0);  // To keep track of the last assigned thread
 //ME2
 
 
@@ -302,13 +307,14 @@ static void __kmp_pop_task_stack(kmp_int32 gtid, kmp_info_t *thread,
 
 //ME1
 //Gets the definition of a task from its routine entry
-// static task_definition_t __kmp_get_def(kmp_routine_entry_t routine){
-//     // lock map
-//     std::lock_guard<std::mutex> lock(task_map_m);
-//     task_definition_t res = task_map[routine];
-//     return res;
-// }
-
+#if COST_CLAUSE
+static task_definition_t __kmp_get_def(kmp_routine_entry_t routine){
+    // lock map
+    std::lock_guard<std::mutex> lock(task_map_m);
+    task_definition_t res = task_map[routine];
+    return res;
+}
+#else
 // static task_definition_t __kmp_get_def(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters) {
 //     // Lock the map
 //     std::lock_guard<std::mutex> lock(task_map_m);
@@ -335,31 +341,27 @@ static task_definition_t __kmp_get_def(kmp_routine_entry_t routine, kmp_uint64 t
     }
     return task_definition_t(); // Return a default value or handle it appropriately
 }
+#endif
 
-//Checks if a routine is present in the map
-// static bool __kmp_contains_def(kmp_routine_entry_t routine){
-//     std::lock_guard<std::mutex> lock(task_map_m);
-//     auto search = task_map.find( routine);
-//     if (search != task_map.end()) {
-//         return true;
-//     } else {
-//         return false;
-//     }
-// }
+
 
 //Adds a <routine,definition> pair to the map, may overwrite a previous value.
-// static void __kmp_add_def(kmp_routine_entry_t routine, task_definition_t definition){
-//     std::lock_guard<std::mutex> lock(task_map_m);
-//     task_map[routine] = definition;
-// }
 // static void __kmp_add_def(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters, task_definition_t definition) {
 //     std::lock_guard<std::mutex> lock(task_map_m);
 //     taskloop_map[std::make_pair(routine, td_loop_iters)] = definition;
 // }
+#if COST_CLAUSE
+static void __kmp_add_def(kmp_routine_entry_t routine, task_definition_t definition){
+    std::lock_guard<std::mutex> lock(task_map_m);
+    task_map[routine] = definition;
+}
+#else
 static void __kmp_add_def(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters, task_definition_t definition) {
     std::lock_guard<std::mutex> lock(task_map_m);
     task_map[routine][td_loop_iters] = definition;
 }
+#endif
+
 //Add by Jing: Checks if a routine is present in the map
 // static bool __kmp_contains_taskloop(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters){
 //     std::lock_guard<std::mutex> lock(taskloop_map_m);
@@ -375,6 +377,18 @@ static void __kmp_add_def(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters,
 //     auto search = taskloop_map.find(std::make_pair(routine, td_loop_iters));
 //     return search != taskloop_map.end();
 // }
+#if COST_CLAUSE
+//Checks if a routine is present in the map
+static bool __kmp_contains_def(kmp_routine_entry_t routine){
+    std::lock_guard<std::mutex> lock(task_map_m);
+    auto search = task_map.find( routine);
+    if (search != task_map.end()) {
+        return true;
+    } else {
+        return false;
+    }
+}
+#else
 static bool __kmp_contains_taskloop(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters) {
     std::lock_guard<std::mutex> lock(taskloop_map_m);
     auto routine_it = taskloop_map.find(routine);
@@ -385,6 +399,8 @@ static bool __kmp_contains_taskloop(kmp_routine_entry_t routine, kmp_uint64 td_l
     }
     return false;
 }
+#endif
+
 
 // Add by Jing: get the taskloop id from the map for performance table 
 // static int __kmp_get_taskloop_id(kmp_routine_entry_t routine){
@@ -408,6 +424,19 @@ static bool __kmp_contains_taskloop(kmp_routine_entry_t routine, kmp_uint64 td_l
 //         return -1; // Example sentinel value indicating not found
 //     }
 // }
+#if COST_CLAUSE
+static int __kmp_get_taskloop_id(kmp_routine_entry_t routine) {
+    std::lock_guard<std::mutex> lock(taskloop_map_m);
+    auto routine_it = taskloop_map.find(routine);
+    if (routine_it != taskloop_map.end()) {
+        auto& inner_map = routine_it->second;
+        if (!inner_map.empty()) {
+            return inner_map.begin()->second.load(std::memory_order_acquire);
+        }
+    }
+    return -1; // Return -1 or another sentinel value indicating not found
+}
+#else
 static int __kmp_get_taskloop_id(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters) {
     std::lock_guard<std::mutex> lock(taskloop_map_m);
     auto routine_it = taskloop_map.find(routine);
@@ -420,7 +449,23 @@ static int __kmp_get_taskloop_id(kmp_routine_entry_t routine, kmp_uint64 td_loop
     }
     return -1; // Or another sentinel value indicating not found
 }
+#endif
 
+// Add by Jing: get the cost of the recorded taskloop from the map for performance table
+#if COST_CLAUSE
+static kmp_uint64 __kmp_get_cost_byid(int taskloop_id) {
+    std::lock_guard<std::mutex> lock(taskloop_map_m);
+    for (const auto& routine_entry : taskloop_map) {
+        const auto& inner_map = routine_entry.second;
+        for (const auto& it : inner_map) {
+            if (it.second.load(std::memory_order_acquire) == taskloop_id) {
+                return it.first; // Return the associated iterations
+            }
+        }
+    }
+    return 0; // Return 0 or another sentinel value indicating not found
+}
+#endif
 
 // Add by Jing: add the taskloop id to the map for performance table 
 // static void __kmp_add_taskloop_id(kmp_routine_entry_t routine, int task_loop_id){
@@ -431,10 +476,17 @@ static int __kmp_get_taskloop_id(kmp_routine_entry_t routine, kmp_uint64 td_loop
 //     std::lock_guard<std::mutex> lock(taskloop_map_m);
 //     taskloop_map[std::make_pair(routine, td_loop_iters)] = task_loop_id;
 // }
+#if COST_CLAUSE
+static void __kmp_add_taskloop_id(kmp_routine_entry_t routine, kmp_uint64 cost, int task_loop_id) {
+    std::lock_guard<std::mutex> lock(taskloop_map_m);
+    taskloop_map[routine][cost].store(task_loop_id, std::memory_order_release);
+}
+#else
 static void __kmp_add_taskloop_id(kmp_routine_entry_t routine, kmp_uint64 td_loop_iters, int task_loop_id) {
     std::lock_guard<std::mutex> lock(taskloop_map_m);
     taskloop_map[routine][td_loop_iters].store(task_loop_id, std::memory_order_release);
 }
+#endif
 //ME2
 
 // returns 1 if new task is allowed to execute, 0 otherwise
@@ -536,7 +588,8 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
            ("__kmp_push_task: T#%d trying to push task %p.\n", gtid, taskdata));
 
 #if DEBUG_PRINT_THREAD_INFO | DEBUG_PRINT_TASK_INFO
-  std::cout << "[JING] __kmp_push_task: thread " << tid << " trying to push task " << taskdata->td_task_id << std::endl;
+  #pragma omp critical
+    std::cout << "[JING] __kmp_push_task: thread " << tid << " trying to push task " << taskdata->td_task_id << std::endl;
 #endif
 
   if (UNLIKELY(taskdata->td_flags.tiedness == TASK_UNTIED)) {
@@ -630,11 +683,11 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
                    TASK_DEQUE_SIZE(thread_data->td));
 
   //ME1
-   __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
+  __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
   kmp_int32 schedule_result = __kmp_schedule_task(thread, task, tid);
   __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
   kmp_int32 push_result;
-  if (schedule_result  == TASK_SUCCESSFULLY_SCHEDULED){
+  if (schedule_result == TASK_SUCCESSFULLY_SCHEDULED){
       push_result = TASK_SUCCESSFULLY_PUSHED;
   }else if (schedule_result == INVOKE_NOW &&
           __kmp_task_is_allowed(gtid, __kmp_task_stealing_constraint, taskdata,
@@ -645,7 +698,8 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
     thread_data->td.td_deque[thread_data->td.td_deque_tail] =
         taskdata; // Push taskdata
 #if DEBUG_PRINT_THREAD_INFO
-    printf("Task %d pushed by thread %d to own queue\n", taskdata->td_task_id, __kmp_tid_from_gtid(gtid));
+    #pragma omp critical
+      printf("Task %d pushed by thread %d to own queue\n", taskdata->td_task_id, __kmp_tid_from_gtid(gtid));
 #endif
 
     thread_data->td.td_deque_tail =
@@ -1190,6 +1244,10 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       thread->th.th_task_team; // might be NULL for serial teams...
 
   //ME1
+#if COST_CLAUSE // Assume time is linear to the number of iterations
+  kmp_uint64 taskloop_recorded_cost = 0;
+#endif
+
   // Calculates the task's execution time
   kmp_real64 current_time = 0;
   __kmp_read_system_time(&current_time);
@@ -1199,10 +1257,11 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   kmp_uint32 finish_time = static_cast<kmp_uint32>(current_time);
 
 #if PERF_DYNAMIC_ON
-  if (taskdata->td_task_type == TASK_UNDEFINED && thread->th.th_counters_active) {
+  if (taskdata->td_task_type == TASK_UNDEFINED && thread->th.th_counters_active)
 #else
-  if (taskdata->td_task_type == TASK_UNDEFINED) {
+  if (taskdata->td_task_type == TASK_UNDEFINED) 
 #endif
+  {
 #if PERF_DYNAMIC_ON      
 //       if(cycles_finish > 0){
 //           // Close the counters since were not using them anymore
@@ -1260,10 +1319,10 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 #endif
       
       if(cycles_finish > 0){ // sometimes perf gives us 0 cycles, which needs to run another time to categorize the taskloop type
+        task_definition_t task_type;
         // If the routine haven't been classified during this execution, classify the task
         // if(!__kmp_contains_def(task->routine)) {
-        if(taskdata->td_task_type == TASK_UNDEFINED) {
-            task_definition_t task_type;
+        if(taskdata->td_task_type == TASK_UNDEFINED) { 
   #if !PERF_DISABLE
             if (cachemiss_finish == 0) cachemiss_finish += 1; // Avoid dividing by zero
             kmp_int32 arithmetic_intensity = (cycles_finish * FLOPS_PER_CYCLE) / (64 * cachemiss_finish);
@@ -1289,51 +1348,83 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
             printf("[JING] ARITHMETIC INTENSITY = %d, categorised as %s on thread %d with %llu cachemisses\n", arithmetic_intensity, str.c_str(), tid, cachemiss_finish);
   #endif
             // Add the task routine with a defined task type
-            __kmp_add_def(task->routine, taskdata->td_loop_iters, task_type);
+// #if COST_CLAUSE
+//             __kmp_add_def(task->routine, task_type);
+// #else
+//             __kmp_add_def(task->routine, taskdata->td_loop_iters, task_type);
+// #endif
         }else{
+#if COST_CLAUSE
+            taskdata->td_task_type = __kmp_get_def(task->routine);
+#else
             taskdata->td_task_type = __kmp_get_def(task->routine, taskdata->td_loop_iters); 
-        }
-
-        if(!__kmp_contains_taskloop(task->routine, taskdata->td_loop_iters)) {
-            int current_task_loop_id = task_loop_id.fetch_add(1, std::memory_order_acq_rel); // Increment and get current value
-            __kmp_add_taskloop_id(task->routine, taskdata->td_loop_iters, current_task_loop_id);
-            taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
-#if DEBUG_PRINT_TASK_INFO
-            std::cout << "[JING] Taskloop id " << static_cast<int>(taskdata->td_taskloop_id) << " added for new task routine" << std::endl;
 #endif
         }
+#if COST_CLAUSE
+        if(!__kmp_contains_def(task->routine))
+#else
+        if(!__kmp_contains_taskloop(task->routine, taskdata->td_loop_iters)) 
+#endif
+        {
+            if(finish_time > PARALLEL_COST){  // If the execution time is too small, we ignore 
+                int current_task_loop_id = task_loop_id.fetch_add(1, std::memory_order_acq_rel); // Increment and get current value
+#if COST_CLAUSE
+                __kmp_add_def(task->routine, task_type);
+                __kmp_add_taskloop_id(task->routine, taskdata->td_cost, current_task_loop_id);
+                taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine);
+                taskloop_recorded_cost = taskdata->td_cost;
+#else
+                __kmp_add_def(task->routine, taskdata->td_loop_iters, task_type);
+                __kmp_add_taskloop_id(task->routine, taskdata->td_loop_iters, current_task_loop_id);
+                taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
+#endif
+#if DEBUG_PRINT_TASK_INFO
+                #pragma omp critical
+                {
+                  std::cout << "[JING] Taskloop id " << static_cast<int>(taskdata->td_taskloop_id) << " added as new task routine"<< std::endl;
+                }
+#endif
+            }
+        }
         else{
+#if COST_CLAUSE
+            taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine);
+            taskloop_recorded_cost = __kmp_get_cost_byid(taskdata->td_taskloop_id);   
+#else
             taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
+#endif
+#if DEBUG_PRINT_TASK_INFO
+            #pragma omp critical
+            {
+              std::cout << "[JING] Taskloop id " << static_cast<int>(taskdata->td_taskloop_id) << " is not new"<< std::endl;
+            }
+#endif
         }
       }else{
         taskdata->td_task_type = TASK_UNDEFINED;
       }
-//       // Add by Jing
-//       if(!__kmp_contains_taskloop(task->routine, taskdata->td_loop_iters)) {
-//           // std::atomic<task_definition_t> task_loop_id; // Taskloop id
-//           // task_definition_t task_loop_id; // Taskloop id
-//           // KMP_ATOMIC_INC(&task_loop_id); // Increment the taskloop id
-//           // task_definition_t new_task_loop_id = task_loop_id.fetch_add(1, std::memory_order_acq_rel);
-//           // __kmp_add_taskloop_id(task->routine, task_loop_id);
-//           int current_task_loop_id = task_loop_id.fetch_add(1, std::memory_order_acq_rel); // Increment and get current value
-//           __kmp_add_taskloop_id(task->routine, taskdata->td_loop_iters, current_task_loop_id);
-//           taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
-// #if DEBUG_PRINT_TASK_INFO
-//           std::cout << "[JING] Taskloop id " << static_cast<int>(taskdata->td_taskloop_id) << " added for new task routine" << std::endl;
-// #endif
-//       }else{
-//           taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
-//       }
   }
-#if DEBUG_PRINT_TASK_INFO
   else{
-    kmp_int32 tid = __kmp_tid_from_gtid(gtid);
-    printf("[JING] Finished task %d on thread %d\n", taskdata->td_task_id, tid);
-  }
+#if COST_CLAUSE
+    taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine);
+    taskloop_recorded_cost = __kmp_get_cost_byid(taskdata->td_taskloop_id);   
+#if DEBUG_PRINT_TASK_INFO
+    #pragma omp critical
+    {
+      std::cout << "[JING] Taskloop is in the map, id " << static_cast<int>(taskdata->td_taskloop_id) << ", recorded cost " << static_cast<int>(taskloop_recorded_cost) << std::endl;
+    }
 #endif
+#else
+    taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
+#endif
+#if DEBUG_PRINT_TASK_INFO
+    kmp_int32 tid = __kmp_tid_from_gtid(gtid);
+    printf("[JING] Finished task %d on thread %d with execution time %u\n", taskdata->td_task_id, tid, finish_time);
+#endif
+  }
   // If we don't get a valid time, we ignore the history of this task
   // (Defined tasks are less than TASK_UNDEFINED, to keep Pattern tasks out)
-  if (finish_time != 0 && taskdata->td_task_type < TASK_UNDEFINED){
+  if (finish_time > PARALLEL_COST && taskdata->td_task_type < TASK_UNDEFINED){ 
 #if MEASURE_ACCURACY
       {
           static std::mutex mutex;
@@ -1352,23 +1443,62 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       }
       printf("Measured exec time: %d, predicted exec time: %d\n", finish_time, taskdata->td_predicted_exectime);
 #endif
-      // __kmp_performance_model_add(thread->th.th_cluster, taskdata->td_task_type, finish_time, taskdata->td_taskwidth);
+#if COST_CLAUSE      
+      if(taskloop_recorded_cost != 0 && taskdata->td_cost != taskloop_recorded_cost){
+#if COST_ACCURACY
+        kmp_uint32 recored_exec_time = __kmp_ptt_get(taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth);
+        if(recored_exec_time != 0){ // If we have a recorded execution time, we can predict the time
+          kmp_uint32 predicted_time = recored_exec_time * float(taskdata->td_cost) / float(taskloop_recorded_cost);
+          printf("Task %d, recorded exec time %d, predicted exec time %d\n", taskdata->td_taskloop_id, recored_exec_time, predicted_time);
+          // Cast to int64_t to avoid unsigned integer subtraction issues
+          int64_t finish_time_signed = static_cast<int64_t>(finish_time);
+          int64_t predicted_time_signed = static_cast<int64_t>(predicted_time);
+          float accuracy = 100.0f * (1.0f - std::abs(float(finish_time_signed - predicted_time_signed)) / float(finish_time));
+          {
+            static std::mutex mutex;
+            std::lock_guard<std::mutex> lock(mutex);
+            std::string filename = "cost_accuracy.txt";
+            std::ofstream myfile (filename, std::ios::out | std::ios::app );
+            if (myfile.is_open()){ // output: real execution time, predicted execution time, prediction accuracy
+                myfile << finish_time << ", " << predicted_time << ", " << std::fixed << std::setprecision(2) << accuracy << std::endl;
+                myfile.close();
+            }
+            else printf("Unable to open file");
+          }
+        }
+#endif 
+        kmp_uint32 scaled_time = finish_time * float(taskloop_recorded_cost) / float(taskdata->td_cost);
+        __kmp_ptt_add(taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth, scaled_time); // Add by Jing
+#if DEBUG_PRINT_TASK_INFO
+        #pragma omp critical
+        {
+          std::cout << "[JING] Adding to perf model at cluster " << static_cast<int>(thread->th.th_cluster) \
+            << ", width " << static_cast<int>(taskdata->td_taskwidth) << ", tasktype " << static_cast<int>(taskdata->td_task_type) \
+            << ", taskloop id " << static_cast<int>(taskdata->td_taskloop_id) << ", execution time " << finish_time << " us, but #cost " \
+            << taskdata->td_cost << " are different from the recorded cost " << taskloop_recorded_cost << ", predicted time " << scaled_time << std::endl;
+        }
+#endif
+      }else{
+#endif
       __kmp_ptt_add(taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth, finish_time); // Add by Jing
 #if DEBUG_PRINT_TASK_INFO
       #pragma omp critical
       {
-        std::cout << "[JING] Task " << taskdata->td_task_id << ": add to perf model at cluster " << static_cast<int>(thread->th.th_cluster) \
+        std::cout << "[JING] Adding to perf model at cluster " << static_cast<int>(thread->th.th_cluster) \
           << ", width " << static_cast<int>(taskdata->td_taskwidth) << ", tasktype " << static_cast<int>(taskdata->td_task_type) \
           << ", taskloop id " << static_cast<int>(taskdata->td_taskloop_id) << ", execution time " << finish_time << " us"<< std::endl;
       }
 #endif
-  }
-#if DEBUG_PRINT_TASK_INFO
-  #pragma omp critical
-  {
-    std::cout << "[JING] __kmp_task_finish: Thread "<< __kmp_tid_from_gtid(gtid) << " finishing task " << taskdata->td_task_id << std::endl;  
-  }
+#if COST_CLAUSE
+      }
 #endif
+  }
+// #if DEBUG_PRINT_TASK_INFO
+//   #pragma omp critical
+//   {
+//     std::cout << "[JING] __kmp_task_finish: Thread "<< __kmp_tid_from_gtid(gtid) << " finishing task " << taskdata->td_task_id << std::endl;  
+//   }
+// #endif
   //ME2
 
 #if KMP_DEBUG
@@ -1555,10 +1685,6 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
   KA_TRACE(
       10, ("__kmp_task_finish(exit): T#%d finished task %p, resuming task %p\n",
            gtid, taskdata, resumed_task));
-  // #pragma omp critical
-  // {
-  //   std::cout << "[JING] __kmp_task_finish(exit): T#"<< __kmp_tid_from_gtid(gtid) << " finished task " << taskdata->td_task_id << ", resuming task " << resumed_task->td_task_id << std::endl;
-  // }
   return;
 }
 
@@ -4918,6 +5044,7 @@ static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid){
 
 // returns the best thread candidate on given cluster
 static kmp_uint8 __kmp_schedule_thread(kmp_task_t *task, kmp_info_t *thread, kmp_uint8 cluster, kmp_int32 tid){
+/*  Implementation of Master students
     // We now have the optimal cluster
     // schedule task on optimal thread right now picks the first sleeping thread it finds
     // If unable to find a sleeping thread, schedule task on yourself
@@ -4934,6 +5061,24 @@ static kmp_uint8 __kmp_schedule_thread(kmp_task_t *task, kmp_info_t *thread, kmp
 
     // You are not in the optimal cluster, schedule on first thread in the optimal cluster
     return kmp_sched_p->cluster_tids[cluster][0];
+*/
+    // Initialize the thread selection to an invalid value
+    int selected_thread = -1;
+
+    // Try to find a thread in a round-robin fashion
+    for (int attempt = 0; attempt < kmp_sched_p->cluster_tid_entries[cluster]; ++attempt) {
+        int next_thread = (last_thread.load() + 1) % kmp_sched_p->cluster_tid_entries[cluster];
+        if (next_thread != -1) {  // Found a valid thread
+            selected_thread = next_thread;
+            last_thread.store(next_thread);  // Update last_thread
+            KMP_TASK_TO_TASKDATA(task)->td_no_steal = 1;
+            return selected_thread;
+        }
+        last_thread.store(next_thread);  // Update last_thread for next attempt
+    }
+
+    // Fallback strategy when no non-interfering thread is found
+    return (cluster == thread->th.th_cluster) ? tid : kmp_sched_p->cluster_tids[cluster][0];
 }
 
 // TODO TEMP debug, fix and remove
@@ -4941,22 +5086,8 @@ static kmp_uint8 __kmp_schedule_thread(kmp_task_t *task, kmp_info_t *thread, kmp
 int unique_taskloop_id = 0;
 #endif
 
-// Task mapping algorithm for taskloop constructs
 static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid, kmp_uint64 max_split){
-    //debug
 #if DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO
-    /*   printf("Performance model update after %d tasks\nExecution times:  | CPU | CACHE | MEMORY\n",
-               global_taskcounter);
-        for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
-            for (int width = 0; width < CLUSTER_SIZE; width++) {
-                printf("cluster %d width %d | %d  | %d    | %d\n",
-                       cluster, width+1,
-                       kmp_perf_p->execution_times[cluster][TASK_CPU][width],
-                       kmp_perf_p->execution_times[cluster][TASK_CACHE][width],
-                       kmp_perf_p->execution_times[cluster][TASK_MEMORY][width]);
-            }
-        }
-        */ 
     if (global_taskcounter > 0){  // Add by Jing
         std::cout << "Performance model update after " << global_taskcounter << " tasks" << std::endl; 
         for(int i = 0; i < TASKLOOP_ID; i++){
@@ -5008,15 +5139,22 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     kmp_uint8 task_type;
     kmp_uint8 taskloop_id;
     // Get and set task type classification
-    // if(__kmp_contains_def(task->routine)) {
+#if COST_CLAUSE
+    if(__kmp_contains_def(task->routine)){
+      task_type = __kmp_get_def(task->routine);
+      taskloop_id = __kmp_get_taskloop_id(task->routine);
+      printf("task_type = %d, taskloop_id = %d\n", task_type, taskloop_id);
+    }
+#else
     if(__kmp_contains_taskloop(task->routine, taskdata->td_loop_iters)) {
       task_type = __kmp_get_def(task->routine, taskdata->td_loop_iters);
       taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
     }
+#endif
     else{
       task_type = TASK_UNDEFINED;
     }
-    // printf("task_type = %d, taskloop_id = %d, iters = %d \n", task_type, taskloop_id, taskdata->td_loop_iters);
+    
 
     //TODO Debug remove
 #if DEBUG_PRINT_THREAD_INFO | DEBUG_PRINT_TASK_INFO | DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO | DEBUG_PRINT_TASKLOOP_SPLIT_INFO | EXPORT_DATA
@@ -5039,7 +5177,10 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
               taskdata->td_taskwidth = cluster_width;
               kmp_perf_p->get_optimal[taskloop_id] = 0; 
 #if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
-              printf("[JING] __kmp_taskloop: Taskloop = %d, training phase: Cluster = %d, Number of tasks = %hhu\n", taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
+              #pragma omp critical
+              {
+                printf("[JING] __kmp_taskloop: Task %d, training phase: Cluster = %d, Number of tasks = %hhu\n", taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
+              }
 #endif
               // exit_loops = true; // Set the flag to signal exiting the loops
               return;
@@ -5058,7 +5199,28 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
 #endif
             for(kmp_int32 cluster_width = 1; cluster_width < cluster_width_max; cluster_width++) {                
                 // kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster, task_type, cluster_width);
-                kmp_uint32 exec_time = __kmp_ptt_get(taskloop_id, curr_cluster, cluster_width); // Add by Jing: Get the execution time from the performance model               
+                kmp_uint32 exec_time = __kmp_ptt_get(taskloop_id, curr_cluster, cluster_width); // Add by Jing: Get the execution time from the performance model  
+#if COST_CLAUSE
+                // kmp_uint64 taskloop_recorded_cost = __kmp_get_cost_byid(taskdata->td_taskloop_id);
+                kmp_uint64 taskloop_recorded_cost = __kmp_get_cost_byid(taskloop_id);    
+#if DEBUG_PRINT_TASK_INFO
+                #pragma omp critical
+                {
+                  std::cout << "[JING] Taskloop ID: " << static_cast<int>(taskloop_id) << ", Cluster: " << curr_cluster << ", Width: " << cluster_width \
+                  << ", Execution time from PTT: " << exec_time << ", recorded cost: " << taskloop_recorded_cost << std::endl;
+                }
+#endif
+                if(taskdata->td_cost != taskloop_recorded_cost){
+                    exec_time = exec_time * taskdata->td_cost / taskloop_recorded_cost; // predict the execution time based on the cost
+#if DEBUG_PRINT_TASK_INFO
+                    #pragma omp critical
+                    {
+                      std::cout << "[JING] Task cost changed! Execution time prediction: " << exec_time << std::endl;
+                    }
+#endif
+                } 
+#endif
+                     
 #if INTERPOLATION == ONLINE
                 if (exec_time <= 0) {
                     if (!created_model) {
@@ -5088,14 +5250,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                 }
 
 #endif
-                // if(exec_time == 0){ // haven't trained this PTT entry yet 
-                //   optimal_cluster = curr_cluster;
-                //   optimal_cluster_width = cluster_width;
-                //   taskdata->td_get_optimal = 0;
-                //   exit_loops = true; // Set the flag to signal exiting the loops
-                //   break; // Break the inner loop
-                // }
-                // else{ 
+
                 // the idle power consumption is shared between current cluster and the idle clusters.
                 kmp_uint32 idle_power = kmp_sched_p->idle_power[curr_cluster];
                 kmp_uint8 number_active_cores[CLUSTER_AMOUNT] = {0};
@@ -5182,11 +5337,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                     << " and minimum energy: " << minimum_energy << " Joules." << std::endl;
 #endif                    
                 }
-            // }
             }
-            // if (exit_loops) { // If the flag is set, break the outer loop
-            //     break;
-            // }
         }
         taskdata->td_taskwidth = optimal_cluster_width; //TODO Move this out to its own function, should return the optimal cluster and width instead
         taskdata->td_cluster = optimal_cluster;
@@ -5361,16 +5512,29 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task, kmp_i
   taskdata = KMP_TASK_TO_TASKDATA(task);
 
   // If this taskloop has run before, get the task type
-  if(__kmp_contains_taskloop(task->routine, taskdata->td_loop_iters)){ //(__kmp_contains_def(task->routine)){
-      taskdata->td_task_type= __kmp_get_def(task->routine, taskdata->td_loop_iters);
-      taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
+#if COST_CLAUSE
+  if(__kmp_contains_def(task->routine)){
+      taskdata->td_task_type= __kmp_get_def(task->routine);
 #if DEBUG_PRINT_TASK_INFO
+      taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine);
+      #pragma omp critical
+      {
+        std::cout << "[JING] Same routine already run before, task " << taskdata->td_task_id << " type: " << static_cast<int>(taskdata->td_task_type) << ", get taskloop id " << static_cast<int>(taskdata->td_taskloop_id) << std::endl;
+      }
+#endif
+  }
+#else
+  if(__kmp_contains_taskloop(task->routine, taskdata->td_loop_iters)){
+      taskdata->td_task_type= __kmp_get_def(task->routine, taskdata->td_loop_iters);
+#if DEBUG_PRINT_TASK_INFO
+      taskdata->td_taskloop_id = __kmp_get_taskloop_id(task->routine, taskdata->td_loop_iters);
       #pragma omp critical
       {
         std::cout << "[JING] Already run before, task " << taskdata->td_task_id << " type: " << static_cast<int>(taskdata->td_task_type) << ", taskloop id: " << static_cast<int>(taskdata->td_taskloop_id) << std::endl;
       }
-#endif
+#endif      
   }
+#endif
   // Otherwise mark it as undefined
   else{
       taskdata->td_task_type = TASK_UNDEFINED;
@@ -5412,7 +5576,6 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task, kmp_i
 #endif
           return INVOKE_NOW;
       }
-
       return TASK_SCHEDULE_SELF;
   }
 
@@ -5428,7 +5591,6 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task, kmp_i
 #endif
       return TASK_SCHEDULE_SELF;
   }
-
 
   if (__kmp_give_task(thread_sched, tid_sched, task, 1)) {
     // Putting target thread as awake, otherwise if there are more tasks incoming
@@ -6193,10 +6355,18 @@ void __kmp_taskloop_recur(ident_t *loc, int gtid, kmp_task_t *task,
 // tc         Iterations count
 // num_t_min  Threshold to launch tasks recursively
 // task_dup   Tasks duplication routine
+#if COST_CLAUSE
+static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
+                           kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st,
+                           int nogroup, int sched, kmp_uint64 grainsize, kmp_uint64 cost,
+                           int modifier, void *task_dup) 
+#else
 static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
                            kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st,
                            int nogroup, int sched, kmp_uint64 grainsize,
-                           int modifier, void *task_dup) {
+                           int modifier, void *task_dup) 
+#endif 
+{
   kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
   KMP_DEBUG_ASSERT(task != NULL);
   if (nogroup == 0) {
@@ -6235,11 +6405,11 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
   }
 
 //ME1
-
   kmp_int32 tid = __kmp_tid_from_gtid(gtid);
 #if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
   std::cout << "[JING] __kmp_taskloop: Task " << taskdata->td_task_id << ", thread " << tid << ", lowerbound = " << lower \
-  << ", upperbound = " << upper << ", stride = " << st << ", num_tasks_min = " << num_tasks_min << ", grainsize = " << grainsize << ", tc(iteration count) = " << tc << std::endl;
+  << ", upperbound = " << upper << ", stride = " << st << ", num_tasks_min = " << num_tasks_min << ", grainsize = " << grainsize \
+  << ", tc(iteration count) = " << tc << std::endl;
 #endif
 //ME2
 
@@ -6281,13 +6451,28 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
 
   // compute num_tasks/grainsize based on the input provided
   switch (sched) {
-  case 0: // no schedule clause specified, we can choose the default
+  case 0: // Here we implemented ERASE scheduler since no schedule clause specified, we can choose the default
     //ME1
     taskdata->td_task_type = TASK_PATTERN;
-    taskdata->td_loop_iters = tc;
-    __kmp_taskloop_mapping(thread, task, tid, tc + 1); // [JING-Q] why use tid instead of gtid? 
+#if COST_CLAUSE
+    taskdata->td_cost = cost;
+#if DEBUG_PRINT_TASK_INFO
+    #pragma omp critical
+    {
+      printf("[JING] __kmp_taskloop: Task %d, grainsize = %llu, cost = %llu\n", taskdata->td_task_id, grainsize, cost);
+    }
+#endif
+#else
+    taskdata->td_loop_iters = tc; 
+#if DEBUG_PRINT_TASK_INFO
+    #pragma omp critical
+    {
+      printf("[JING] __kmp_taskloop: Task %d, grainsize = %d, iterations = %d \n", taskdata->td_task_id, grainsize, taskdata->td_loop_iters);
+    }
+#endif
+#endif
+    __kmp_taskloop_mapping(thread, task, tid, tc + 1);    
     grainsize = taskdata->td_taskwidth;
-    // printf("[JING] __kmp_taskloop: Task %d, grainsize = %d, iterations = %d\n", taskdata->td_task_id, grainsize, taskdata->td_loop_iters);
     //TODO need to calculate max allowed grainsize here
     //ME2
     KMP_FALLTHROUGH();
@@ -6415,9 +6600,44 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
 
 Execute the taskloop construct.
 */
+#if COST_CLAUSE
 void __kmpc_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
                      kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st, int nogroup,
-                     int sched, kmp_uint64 grainsize, void *task_dup) {
+                     int sched, kmp_uint64 grainsize, kmp_uint64 cost, void *task_dup) 
+{
+  __kmp_assert_valid_gtid(gtid);
+  KA_TRACE(20, ("__kmpc_taskloop(enter): T#%d\n", gtid));
+  //ME1
+  {
+    std::lock_guard<std::mutex> lock(init_mutex);
+    if(!scheduler_init){
+#if DEBUG_PRINT_THREAD_INFO     
+      std::cout << "[JING] Initializing ERASE scheduler..." << std::endl;
+#endif
+      __kmp_scheduler_init();
+      scheduler_init = true;
+    }
+    if(!performance_model_init){
+#if DEBUG_PRINT_THREAD_INFO
+      std::cout << "[JING] Initializing Performance Model..." << std::endl;
+#endif
+      __kmp_ptt_init();
+      performance_model_init = true;
+    }
+  } // Lock is released here when the scope ends
+  //ME2 - Lock is not held during __kmp_taskloop call
+  // std::cout << "[RUNTIME] sched = " << sched << ", grainsize = " << grainsize << ", cost = " << cost << std::endl;
+  __kmp_taskloop(loc, gtid, task, if_val, lb, ub, st, nogroup, sched, grainsize,
+                 cost, 0, task_dup);
+  KA_TRACE(20, ("__kmpc_taskloop(exit): T#%d\n", gtid));
+}
+
+#else
+
+void __kmpc_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
+                     kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st, int nogroup,
+                     int sched, kmp_uint64 grainsize, void *task_dup) 
+                    {
   __kmp_assert_valid_gtid(gtid);
   KA_TRACE(20, ("__kmpc_taskloop(enter): T#%d\n", gtid));
   //ME1
@@ -6443,6 +6663,7 @@ void __kmpc_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
                  0, task_dup);
   KA_TRACE(20, ("__kmpc_taskloop(exit): T#%d\n", gtid));
 }
+#endif
 
 /*!
 @ingroup TASKING
@@ -6461,13 +6682,28 @@ void __kmpc_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
 
 Execute the taskloop construct.
 */
+#if COST_CLAUSE
+void __kmpc_taskloop_5(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
+                     kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st, int nogroup,
+                     int sched, kmp_uint64 grainsize, kmp_uint64 cost, void *task_dup) 
+{
+  __kmp_assert_valid_gtid(gtid);
+  KA_TRACE(20, ("__kmpc_taskloop_5(enter): T#%d\n", gtid));
+  __kmp_taskloop(loc, gtid, task, if_val, lb, ub, st, nogroup, sched, grainsize,
+                 cost, 0, task_dup);
+  KA_TRACE(20, ("__kmpc_taskloop_5(exit): T#%d\n", gtid));
+}
+
+#else
 void __kmpc_taskloop_5(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
                        kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st,
                        int nogroup, int sched, kmp_uint64 grainsize,
-                       int modifier, void *task_dup) {
+                       int modifier, void *task_dup) 
+{
   __kmp_assert_valid_gtid(gtid);
   KA_TRACE(20, ("__kmpc_taskloop_5(enter): T#%d\n", gtid));
   __kmp_taskloop(loc, gtid, task, if_val, lb, ub, st, nogroup, sched, grainsize,
                  modifier, task_dup);
   KA_TRACE(20, ("__kmpc_taskloop_5(exit): T#%d\n", gtid));
 }
+#endif

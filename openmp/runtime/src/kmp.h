@@ -37,6 +37,7 @@
 #include <string.h>
 #include <sys/ioctl.h> //Used to control the perf counters
 #include <cfloat> // Include this header to use FLT_MAX
+#include <iomanip> // Include this header to use std::setprecision
 //ME2
 
 /* #define BUILD_PARALLEL_ORDERED 1 */
@@ -67,6 +68,7 @@
 
 // Used in kmp_affinity.cpp to force HWLOC to reckognise all cores on the TX2
 #define TX2 1
+#define ALDERLAKE 0
 
 // Debugging, forces taskloop splits in range from 1 to max number of threads,
 #define TEST_DIFFERENT_WIDTH 0
@@ -75,6 +77,8 @@
 // Exports the performance table entry (or interpolation prediction if enabled)
 // together with the actual execution time
 #define MEASURE_ACCURACY 0
+
+#define COST_ACCURACY 1 // enable the accuracy test of the cost() clause in the taskloop pragma
 
 // Interpolation settings
 #define NONE 0 // No interpolation
@@ -120,7 +124,7 @@
 #define MAX_SLEEP_SHIFT 10
 
 // Debugging prints
-#define DEBUG_PRINT_ALL 0
+#define DEBUG_PRINT_ALL 1
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
@@ -128,12 +132,29 @@
 #define DEBUG_PRINT_TASKLOOP_SPLIT_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_POWER_VALUES 0
 
+#define COST_CLAUSE 1 // enable the cost() clause in the taskloop pragma
+
+#define PARALLEL_COST 100
+// if exec time is less than this value (microseconds), no update in the performance model 
+// Reason: (1) the overhead of the parallelization is probably higher than the exec time of the task; 
+// (2) the exec time is too small to be accurately measured
+
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 // Hardcoded variables, Must be set for each machine
+#if TX2
 #define CLUSTER_AMOUNT  1 // Number of clusters
 #define CLUSTER_B_ACTIVE 0 // 1 if cluster B is active, 0 if not
 #define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 2 // threads on cluster B
+#endif
+
+#if ALDERLAKE
+#define CLUSTER_AMOUNT  1 // Number of clusters
+#define CLUSTER_B_ACTIVE 0 // 1 if cluster B is active, 0 if not
+#define CLUSTER_A_SIZE 8 // threads on cluster A
+#define CLUSTER_B_SIZE 8 // threads on cluster B
+#endif
+
 
 #define CLUSTER_SIZE MAX(CLUSTER_A_SIZE, CLUSTER_B_SIZE)
 
@@ -2688,6 +2709,9 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   kmp_uint8 td_taskloop_id; // Taskloop id, used to identify the taskloop, same taskloop routine shares the same performance table
   kmp_uint8 td_get_optimal; // Flag for if the taskloop has got the optimal schedule configuration
   kmp_uint64 td_loop_iters; // Number of iterations in the taskloop
+#if COST_CLAUSE
+  kmp_uint64 td_cost; // Cost of the task
+#endif
 #ifdef MEASURE_ACCURACY
   kmp_uint32 td_predicted_exectime;
 #endif
@@ -4224,17 +4248,34 @@ KMP_EXPORT int __kmp_get_cancellation_status(int cancel_kind);
 
 KMP_EXPORT void __kmpc_proxy_task_completed(kmp_int32 gtid, kmp_task_t *ptask);
 KMP_EXPORT void __kmpc_proxy_task_completed_ooo(kmp_task_t *ptask);
+#if COST_CLAUSE 
+KMP_EXPORT void __kmpc_taskloop(ident_t *loc, kmp_int32 gtid, kmp_task_t *task,
+                                kmp_int32 if_val, kmp_uint64 *lb,
+                                kmp_uint64 *ub, kmp_int64 st, kmp_int32 nogroup,
+                                kmp_int32 sched, kmp_uint64 grainsize, kmp_uint64 cost,
+                                void *task_dup);   
+#else
 KMP_EXPORT void __kmpc_taskloop(ident_t *loc, kmp_int32 gtid, kmp_task_t *task,
                                 kmp_int32 if_val, kmp_uint64 *lb,
                                 kmp_uint64 *ub, kmp_int64 st, kmp_int32 nogroup,
                                 kmp_int32 sched, kmp_uint64 grainsize,
                                 void *task_dup);
+#endif
+#if COST_CLAUSE                                    
 KMP_EXPORT void __kmpc_taskloop_5(ident_t *loc, kmp_int32 gtid,
                                   kmp_task_t *task, kmp_int32 if_val,
                                   kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st,
                                   kmp_int32 nogroup, kmp_int32 sched,
-                                  kmp_uint64 grainsize, kmp_int32 modifier,
+                                  kmp_uint64 grainsize, kmp_uint64 cost, kmp_int32 modifier, 
+                                  void *task_dup);  
+#else                                                                                            
+KMP_EXPORT void __kmpc_taskloop_5(ident_t *loc, kmp_int32 gtid,
+                                  kmp_task_t *task, kmp_int32 if_val,
+                                  kmp_uint64 *lb, kmp_uint64 *ub, kmp_int64 st,
+                                  kmp_int32 nogroup, kmp_int32 sched,
+                                  kmp_uint64 grainsize, kmp_int32 modifier, 
                                   void *task_dup);
+#endif                              
 KMP_EXPORT void *__kmpc_task_reduction_init(int gtid, int num_data, void *data);
 KMP_EXPORT void *__kmpc_taskred_init(int gtid, int num_data, void *data);
 KMP_EXPORT void *__kmpc_task_reduction_get_th_data(int gtid, void *tg, void *d);

@@ -1760,6 +1760,123 @@ void KMP_EXPAND_NAME(KMP_API_NAME_GOMP_TASKGROUP_REDUCTION_REGISTER)(
 } // extern "C"
 #endif
 
+#if COST_CLAUSE
+template <typename T>
+void __GOMP_taskloop(void (*func)(void *), void *data,
+                     void (*copy_func)(void *, void *), long arg_size,
+                     long arg_align, unsigned gomp_flags,
+                     unsigned long num_tasks, unsigned long cost, int priority, T start, T end,
+                     T step) {
+  typedef void (*p_task_dup_t)(kmp_task_t *, kmp_task_t *, kmp_int32);
+  MKLOC(loc, "GOMP_taskloop");
+  int sched;
+  T *loop_bounds;
+  int gtid = __kmp_entry_gtid();
+  kmp_int32 flags = 0;
+  int if_val = gomp_flags & (1u << 10);
+  int nogroup = gomp_flags & (1u << 11);
+  int up = gomp_flags & (1u << 8);
+  int reductions = gomp_flags & (1u << 12);
+  p_task_dup_t task_dup = NULL;
+  kmp_tasking_flags_t *input_flags = (kmp_tasking_flags_t *)&flags;
+#ifdef KMP_DEBUG
+  {
+    char *buff;
+    buff = __kmp_str_format(
+        "GOMP_taskloop: T#%%d: func:%%p data:%%p copy_func:%%p "
+        "arg_size:%%ld arg_align:%%ld gomp_flags:0x%%x num_tasks:%%lu "
+        "priority:%%d start:%%%s end:%%%s step:%%%s\n",
+        traits_t<T>::spec, traits_t<T>::spec, traits_t<T>::spec);
+    KA_TRACE(20, (buff, gtid, func, data, copy_func, arg_size, arg_align,
+                  gomp_flags, num_tasks, priority, start, end, step));
+    __kmp_str_free(&buff);
+  }
+#endif
+  KMP_ASSERT((size_t)arg_size >= 2 * sizeof(T));
+  KMP_ASSERT(arg_align > 0);
+  // The low-order bit is the "untied" flag
+  if (!(gomp_flags & 1)) {
+    input_flags->tiedness = TASK_TIED;
+  }
+  // The second low-order bit is the "final" flag
+  if (gomp_flags & 2) {
+    input_flags->final = 1;
+  }
+  // Negative step flag
+  if (!up) {
+    // If step is flagged as negative, but isn't properly sign extended
+    // Then manually sign extend it.  Could be a short, int, char embedded
+    // in a long.  So cannot assume any cast.
+    if (step > 0) {
+      for (int i = sizeof(T) * CHAR_BIT - 1; i >= 0L; --i) {
+        // break at the first 1 bit
+        if (step & ((T)1 << i))
+          break;
+        step |= ((T)1 << i);
+      }
+    }
+  }
+  input_flags->native = 1;
+  // Figure out if none/grainsize/num_tasks clause specified
+  if (num_tasks > 0) {
+    if (gomp_flags & (1u << 9))
+      sched = 1; // grainsize specified
+    else
+      sched = 2; // num_tasks specified
+    // neither grainsize nor num_tasks specified
+  } else {
+    sched = 0;
+  }
+
+  // __kmp_task_alloc() sets up all other flags
+  kmp_task_t *task =
+      __kmp_task_alloc(&loc, gtid, input_flags, sizeof(kmp_task_t),
+                       arg_size + arg_align - 1, (kmp_routine_entry_t)func);
+  kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
+  taskdata->td_copy_func = copy_func;
+  taskdata->td_size_loop_bounds = sizeof(T);
+
+  // re-align shareds if needed and setup firstprivate copy constructors
+  // through the task_dup mechanism
+  task->shareds = (void *)((((size_t)task->shareds) + arg_align - 1) /
+                           arg_align * arg_align);
+  if (copy_func) {
+    task_dup = __kmp_gomp_task_dup;
+  }
+  KMP_MEMCPY(task->shareds, data, arg_size);
+
+  loop_bounds = (T *)task->shareds;
+  loop_bounds[0] = start;
+  loop_bounds[1] = end + (up ? -1 : 1);
+
+  if (!nogroup) {
+#if OMPT_SUPPORT && OMPT_OPTIONAL
+    OMPT_STORE_RETURN_ADDRESS(gtid);
+#endif
+    __kmpc_taskgroup(&loc, gtid);
+    if (reductions) {
+      // The data pointer points to lb, ub, then reduction data
+      struct data_t {
+        T a, b;
+        uintptr_t *d;
+      };
+      uintptr_t *d = ((data_t *)data)->d;
+      KMP_EXPAND_NAME(KMP_API_NAME_GOMP_TASKGROUP_REDUCTION_REGISTER)(d);
+    }
+  }
+
+  __kmpc_taskloop(&loc, gtid, task, if_val, (kmp_uint64 *)&(loop_bounds[0]),
+                  (kmp_uint64 *)&(loop_bounds[1]), (kmp_int64)step, 1, sched,
+                  (kmp_uint64)num_tasks, (kmp_uint64)cost, (void *)task_dup);
+
+  if (!nogroup) {
+#if OMPT_SUPPORT && OMPT_OPTIONAL
+    OMPT_STORE_RETURN_ADDRESS(gtid);
+#endif
+    __kmpc_end_taskgroup(&loc, gtid);
+  }
+}
+#else
 template <typename T>
 void __GOMP_taskloop(void (*func)(void *), void *data,
                      void (*copy_func)(void *, void *), long arg_size,
@@ -1863,6 +1980,7 @@ void __GOMP_taskloop(void (*func)(void *), void *data,
       KMP_EXPAND_NAME(KMP_API_NAME_GOMP_TASKGROUP_REDUCTION_REGISTER)(d);
     }
   }
+
   __kmpc_taskloop(&loc, gtid, task, if_val, (kmp_uint64 *)&(loop_bounds[0]),
                   (kmp_uint64 *)&(loop_bounds[1]), (kmp_int64)step, 1, sched,
                   (kmp_uint64)num_tasks, (void *)task_dup);
@@ -1873,6 +1991,7 @@ void __GOMP_taskloop(void (*func)(void *), void *data,
     __kmpc_end_taskgroup(&loc, gtid);
   }
 }
+#endif
 
 // 4 byte version of GOMP_doacross_post
 // This verison needs to create a temporary array which converts 4 byte
@@ -1924,6 +2043,25 @@ template <typename T> void __kmp_GOMP_doacross_wait(T first, va_list args) {
 extern "C" {
 #endif // __cplusplus
 
+#if COST_CLAUSE
+void KMP_EXPAND_NAME(KMP_API_NAME_GOMP_TASKLOOP)(
+    void (*func)(void *), void *data, void (*copy_func)(void *, void *),
+    long arg_size, long arg_align, unsigned gomp_flags, unsigned long num_tasks, unsigned long cost, 
+    int priority, long start, long end, long step) {
+  __GOMP_taskloop<long>(func, data, copy_func, arg_size, arg_align, gomp_flags,
+                        num_tasks, cost, priority, start, end, step);
+}
+
+void KMP_EXPAND_NAME(KMP_API_NAME_GOMP_TASKLOOP_ULL)(
+    void (*func)(void *), void *data, void (*copy_func)(void *, void *),
+    long arg_size, long arg_align, unsigned gomp_flags, unsigned long num_tasks, unsigned long cost, 
+    int priority, unsigned long long start, unsigned long long end,
+    unsigned long long step) {
+  __GOMP_taskloop<unsigned long long>(func, data, copy_func, arg_size,
+                                      arg_align, gomp_flags, num_tasks, cost,
+                                      priority, start, end, step);
+}
+#else
 void KMP_EXPAND_NAME(KMP_API_NAME_GOMP_TASKLOOP)(
     void (*func)(void *), void *data, void (*copy_func)(void *, void *),
     long arg_size, long arg_align, unsigned gomp_flags, unsigned long num_tasks,
@@ -1941,6 +2079,8 @@ void KMP_EXPAND_NAME(KMP_API_NAME_GOMP_TASKLOOP_ULL)(
                                       arg_align, gomp_flags, num_tasks,
                                       priority, start, end, step);
 }
+#endif
+
 
 void KMP_EXPAND_NAME(KMP_API_NAME_GOMP_DOACROSS_POST)(long *count) {
   __kmp_GOMP_doacross_post(count);
