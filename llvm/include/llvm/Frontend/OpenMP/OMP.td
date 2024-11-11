@@ -223,6 +223,10 @@ def OMPC_NumTasks : Clause<"num_tasks"> {
   let clangClass = "OMPNumTasksClause";
   let flangClass = "ScalarIntExpr";
 }
+def OMPC_Cost : Clause<"cost"> {
+  let clangClass = "OMPCostClause";
+  let flangClass = "ScalarIntExpr";
+}
 def OMPC_Hint : Clause<"hint"> {
   let clangClass = "OMPHintClause";
   let flangClass = "ConstantExpr";
@@ -920,7 +924,8 @@ def OMP_TaskLoop : Directive<"taskloop"> {
     VersionedClause<OMPC_NoGroup>,
     VersionedClause<OMPC_Reduction>,
     VersionedClause<OMPC_InReduction>,
-    VersionedClause<OMPC_Allocate>
+    VersionedClause<OMPC_Allocate>,
+    VersionedClause<OMPC_Cost>
   ];
   let allowedOnceClauses = [
     VersionedClause<OMPC_Default>,
@@ -950,7 +955,8 @@ def OMP_TaskLoopSimd : Directive<"taskloop simd"> {
     VersionedClause<OMPC_Private>,
     VersionedClause<OMPC_Reduction>,
     VersionedClause<OMPC_Shared>,
-    VersionedClause<OMPC_Untied>
+    VersionedClause<OMPC_Untied>,
+    VersionedClause<OMPC_Cost>
   ];
   let allowedOnceClauses = [
     VersionedClause<OMPC_If>,
@@ -1584,6 +1590,7 @@ def OMP_MasterTaskloop : Directive<"master taskloop"> {
     VersionedClause<OMPC_GrainSize>,
     VersionedClause<OMPC_NoGroup>,
     VersionedClause<OMPC_NumTasks>,
+    VersionedClause<OMPC_Cost>,
     VersionedClause<OMPC_Reduction>,
     VersionedClause<OMPC_InReduction>,
     VersionedClause<OMPC_Allocate>
@@ -1606,6 +1613,7 @@ def OMP_ParallelMasterTaskloop :
     VersionedClause<OMPC_GrainSize>,
     VersionedClause<OMPC_NoGroup>,
     VersionedClause<OMPC_NumTasks>,
+    VersionedClause<OMPC_Cost>,
     VersionedClause<OMPC_Reduction>,
     VersionedClause<OMPC_Allocate>,
     VersionedClause<OMPC_NumThreads>,
@@ -1633,6 +1641,7 @@ def OMP_MasterTaskloopSimd : Directive<"master taskloop simd"> {
     VersionedClause<OMPC_GrainSize>,
     VersionedClause<OMPC_NoGroup>,
     VersionedClause<OMPC_NumTasks>,
+    VersionedClause<OMPC_Cost>,
     VersionedClause<OMPC_Reduction>,
     VersionedClause<OMPC_InReduction>,
     VersionedClause<OMPC_Allocate>,
@@ -1657,6 +1666,7 @@ def OMP_ParallelMasterTaskloopSimd :
     VersionedClause<OMPC_GrainSize>,
     VersionedClause<OMPC_NoGroup>,
     VersionedClause<OMPC_NumTasks>,
+    VersionedClause<OMPC_Cost>,
     VersionedClause<OMPC_Reduction>,
     VersionedClause<OMPC_Allocate>,
     VersionedClause<OMPC_NumThreads>,
