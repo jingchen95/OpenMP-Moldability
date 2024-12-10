@@ -42,10 +42,53 @@ kmp_performance kmp_perf;
 kmp_performance *kmp_perf_p = &kmp_perf;
 
 static std::atomic<int> task_loop_id(0); // Define task loop ID as atomic integer
-bool scheduler_init = false; // Flag to check if the scheduler has been initialized
-bool performance_model_init = false; // Flag to check if the performance model has been initialized
-std::mutex init_mutex; // Mutex for synchronization
+std::atomic<int> max_task_loop_id(0); // Define max task loop ID as atomic integer
+int using_all_cores[TASKLOOP_MAX_AMOUNT] = {0}; // Define using all cores as atomic integer
+int curr_cpu_freq_index[CLUSTER_AMOUNT] = {0}; // Define current frequency index, 0 indicates highest frequency, 1 indicates medium frequency
+#if TX2 // Can we move this part to a separate file?
+kmp_uint32 available_cpu_frequency[CPU_FREQ_AMOUNT] = {2035200, 1881600, 1728000, 1574400, 1420800, 1267200, 1113600, 960000, 806400, 652800, 499200, 345600};
+kmp_uint32 available_memory_frequency[MEMORY_FREQ_AMOUNT] = {1866000000, 1600000000, 1331200000, 1062400000, 800000000};
+float perf_model_coefficients[CLUSTER_AMOUNT][CLUSTER_MAX_SIZE+1][MODEL_NUM_COE] = 
+{
+    {
+        {0.0}, // initialize first element of each innermost array
+    }
+};
+float cpu_power_model_coefficients[CLUSTER_AMOUNT][CLUSTER_MAX_SIZE+1][MODEL_NUM_COE] = 
+{
+    {
+        {0.0}, // initialize first element of each innermost array
+    }
+};
+double memory_power_model_coefficients[CLUSTER_AMOUNT][CLUSTER_MAX_SIZE+1][MODEL_NUM_COE] = 
+{
+    {
+        {0.0}, // initialize first element of each innermost array
+    }
+};
+#endif
+int curr_memory_freq_index = 0;
+std::atomic<bool> all_clusters_trained{false};
+std::atomic<bool> prediction_finished{false};
+// bool cluster_trained[CLUSTER_AMOUNT] = {false};
+std::atomic<bool> cluster_freq_completed[CLUSTER_AMOUNT][2];
+std::atomic<bool> all_samples_completed(false);
+std::atomic<bool> cluster_trained[CLUSTER_AMOUNT]{};
+std::atomic<kmp_int32> shared_task_completions[TASKLOOP_MAX_AMOUNT]{};  // All elements initialized to 0
+std::mutex freq_check_mutex[CLUSTER_AMOUNT];  // One mutex per cluster for frequency checking
+double MemoryBoundness[TASKLOOP_MAX_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE] = 
+{
+    {
+        {0.0}, // initialize first element of each innermost array
+    }
+};
 
+bool scheduler_init = false; // Flag to check if the scheduler has been initialized
+bool performance_table_init = false; // Flag to check if the performance model has been initialized
+bool model_init = false; // Flag to check if the model has been initialized
+// bool prediction_finished = false; // Flag to check if the prediction has been finished
+std::mutex init_mutex; // Mutex for synchronization
+std::atomic<int> assigned_task_count(0); // To keep track of the number of assigned tasks when using all cores for minimizing EDP
 std::atomic<int> last_thread(0);  // To keep track of the last assigned thread
 //ME2
 
@@ -71,22 +114,26 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task,
 // static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time, kmp_uint8 width);
 // static kmp_uint32 __kmp_performance_model_get(const kmp_uint8 cluster, const kmp_uint8 tasktype, const kmp_uint8 width);
 
-static void __kmp_optimal_config_add(kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width); // Add by Jing
-static kmp_uint8 __kmp_optimal_cluster_get(const kmp_uint8 taskloop_id); // Add by Jing
-static kmp_uint8 __kmp_optimal_width_get(const kmp_uint8 taskloop_id); // Add by Jing
-static void __kmp_ptt_init(); // Add by Jing
-static void __kmp_ptt_add(kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width, kmp_uint32 execution_time); // Add by Jing
-static kmp_uint32 __kmp_ptt_get(const kmp_uint8 taskloop_id, const kmp_uint8 cluster, const kmp_uint8 width); // Add by Jing
+// static void __kmp_optimal_config_add(kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width, kmp_uint8 cpu_freq_idx, kmp_uint8 mem_freq_idx); // Add by Jing
+// static kmp_uint8 __kmp_optimal_cluster_get(const kmp_uint8 taskloop_id); // Add by Jing
+// static kmp_uint8 __kmp_optimal_width_get(const kmp_uint8 taskloop_id); // Add by Jing
+// static void __kmp_ptt_init(); // Add by Jing
+static void __kmp_model_init(); // Add by Jing
+static void __kmp_ptt_add(kmp_uint8 mem_freq_idx, kmp_uint8 cpu_freq_idx, kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width, kmp_uint32 execution_time); // Add by Jing
+static kmp_uint32 __kmp_ptt_get(kmp_uint8 mem_freq_idx, kmp_uint8 cpu_freq_idx, kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width); // Add by Jing
+static void __kmp_compute_memory_boundness(); // Add by Jing
+static void __kmp_start_prediction(); // Add by Jing
 
+static void __kmp_cpu_freq_switch(kmp_uint8 cluster, kmp_uint8 freq_index); // Add by Jing
+static void __kmp_mem_freq_switch(kmp_uint8 freq_index); // Add by Jing
 static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uint8 status);
-// static void __kmp_scheduler_init(kmp_info_t *thread);
-static void __kmp_scheduler_init();
 static kmp_uint8 __kmp_scheduler_add_thread(kmp_uint8 cluster, kmp_int32 tid);
 #if PERF_DYNAMIC_ON
 static void __kmp_perf_enable(kmp_info_t *thread);
 static void __kmp_perf_disable(kmp_info_t *thread);
 #endif
 static void __kmp_perf_init_counters(kmp_info_t *thread);
+static void __kmp_print_perf_table();
 //static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid);
 //ME2
 
@@ -699,7 +746,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
         taskdata; // Push taskdata
 #if DEBUG_PRINT_THREAD_INFO
     #pragma omp critical
-      printf("Task %d pushed by thread %d to own queue\n", taskdata->td_task_id, __kmp_tid_from_gtid(gtid));
+      printf("[JING] Task %d pushed by thread %d to own queue\n", taskdata->td_task_id, __kmp_tid_from_gtid(gtid));
 #endif
 
     thread_data->td.td_deque_tail =
@@ -848,24 +895,9 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
   }
 #endif
 
-
-  //Classification just testing so far
-
-  /*
-  if(__kmp_contains_def(task->routine)){
-      printf("Routine %d already in map with value %d\n", task->routine, __kmp_get_def(task->routine));
-  }else{
-      __kmp_add_def(task->routine, compute_bound);
-      printf("adding routine %d\n", task->routine);
-  }
-  */
+#if !PERF_DISABLE
   // Only read the cache miss counter if the task is undefined
   if (taskdata->td_task_type == TASK_UNDEFINED) {
-      // PERF
-      // Get value
-
-#if !PERF_DISABLE
-
 #if PERF_DYNAMIC_ON
       // Start the counters if not active
       if (thread->th.th_counters_active == 0) __kmp_perf_enable(thread);
@@ -916,12 +948,10 @@ static void __kmp_task_start(kmp_int32 gtid, kmp_task_t *task,
 
       // Starting counters takes time, read system time again
       __kmp_read_system_time(&current_time);
-
-      #endif
   }
+#endif
   // Set task start time
   taskdata->td_starttime = current_time;
-
   //ME2
 
 // Add task to stack if tied
@@ -1307,8 +1337,6 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       // Get final counter values
       kmp_uint64 cycles_finish = current_cycles - taskdata->td_cycles_start + taskdata->td_cycles_prev;
       kmp_uint64 cachemiss_finish = current_cachemiss - taskdata->td_cachemiss_start + taskdata->td_cachemiss_prev;
-#endif 
-
 #if DEBUG_PRINT_TASK_INFO
       kmp_int32 tid = __kmp_tid_from_gtid(gtid);
       if(finish_time) {
@@ -1317,8 +1345,16 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
                  taskdata->td_task_id, tid, current_time, cycles_finish, instructions_finish, frequency);
       }
 #endif
+#else
+#if DEBUG_PRINT_TASK_INFO
+      kmp_int32 tid = __kmp_tid_from_gtid(gtid);
+      if(finish_time) {
+          printf("[JING] Finished task %d on thread %d in %f us\n", taskdata->td_task_id, tid, current_time);
+      }
+#endif
+#endif 
       
-      if(cycles_finish > 0){ // sometimes perf gives us 0 cycles, which needs to run another time to categorize the taskloop type
+      // if(cycles_finish > 0){ // sometimes perf gives us 0 cycles, which needs to run another time to categorize the taskloop type
         task_definition_t task_type;
         // If the routine haven't been classified during this execution, classify the task
         // if(!__kmp_contains_def(task->routine)) {
@@ -1336,16 +1372,16 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
                 taskdata->td_task_type = TASK_MEMORY;
                 task_type = memory_bound;
             }
-  #else
-          taskdata->td_task_type = TASK_MEMORY;
-          task_type = memory_bound;
-  #endif
-  #if DEBUG_PRINT_TASK_INFO
+#if DEBUG_PRINT_TASK_INFO
             std::string str;
             if (arithmetic_intensity < AI_CACHE_LIMIT) str = "TASK_MEMORY";
             else if (arithmetic_intensity < AI_CPU_LIMIT) str = "TASK_CACHE";
             else str = "TASK_CPU";
             printf("[JING] ARITHMETIC INTENSITY = %d, categorised as %s on thread %d with %llu cachemisses\n", arithmetic_intensity, str.c_str(), tid, cachemiss_finish);
+  #endif
+  #else
+          taskdata->td_task_type = TASK_MEMORY;
+          task_type = memory_bound;
   #endif
             // Add the task routine with a defined task type
 // #if COST_CLAUSE
@@ -1368,6 +1404,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
         {
             if(finish_time > PARALLEL_COST){  // If the execution time is too small, we ignore 
                 int current_task_loop_id = task_loop_id.fetch_add(1, std::memory_order_acq_rel); // Increment and get current value
+                max_task_loop_id = current_task_loop_id; // Update the max task loop id
 #if COST_CLAUSE
                 __kmp_add_def(task->routine, task_type);
                 __kmp_add_taskloop_id(task->routine, taskdata->td_cost, current_task_loop_id);
@@ -1400,9 +1437,9 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
             }
 #endif
         }
-      }else{
-        taskdata->td_task_type = TASK_UNDEFINED;
-      }
+      // }else{
+      //   taskdata->td_task_type = TASK_UNDEFINED;
+      // }
   }
   else{
 #if COST_CLAUSE
@@ -1443,10 +1480,11 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
       }
       printf("Measured exec time: %d, predicted exec time: %d\n", finish_time, taskdata->td_predicted_exectime);
 #endif
+    if(kmp_perf_p->get_optimal[taskdata->td_taskloop_id] == 0 || taskdata->td_cluster != CLUSTER_AMOUNT){ // when we have not found the optimal cofigurations OR when the best cluster is not the all clusters (e.g., edp)
 #if COST_CLAUSE      
       if(taskloop_recorded_cost != 0 && taskdata->td_cost != taskloop_recorded_cost){
 #if COST_ACCURACY
-        kmp_uint32 recored_exec_time = __kmp_ptt_get(taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth);
+        kmp_uint32 recored_exec_time = __kmp_ptt_get(curr_memory_freq_index, curr_cpu_freq_index[thread->th.th_cluster], taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth);
         if(recored_exec_time != 0){ // If we have a recorded execution time, we can predict the time
           kmp_uint32 predicted_time = recored_exec_time * float(taskdata->td_cost) / float(taskloop_recorded_cost);
           printf("Task %d, recorded exec time %d, predicted exec time %d\n", taskdata->td_taskloop_id, recored_exec_time, predicted_time);
@@ -1468,7 +1506,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
         }
 #endif 
         kmp_uint32 scaled_time = finish_time * float(taskloop_recorded_cost) / float(taskdata->td_cost);
-        __kmp_ptt_add(taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth, scaled_time); // Add by Jing
+        __kmp_ptt_add(curr_memory_freq_index, curr_cpu_freq_index[thread->th.th_cluster], taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth, scaled_time); // Add by Jing
 #if DEBUG_PRINT_TASK_INFO
         #pragma omp critical
         {
@@ -1480,7 +1518,7 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 #endif
       }else{
 #endif
-      __kmp_ptt_add(taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth, finish_time); // Add by Jing
+      __kmp_ptt_add(curr_memory_freq_index, curr_cpu_freq_index[thread->th.th_cluster], taskdata->td_taskloop_id, thread->th.th_cluster, taskdata->td_taskwidth, finish_time); // Add by Jing
 #if DEBUG_PRINT_TASK_INFO
       #pragma omp critical
       {
@@ -1492,13 +1530,87 @@ static void __kmp_task_finish(kmp_int32 gtid, kmp_task_t *task,
 #if COST_CLAUSE
       }
 #endif
+    }
+      shared_task_completions[taskdata->td_taskloop_id].fetch_add(1); // TODO: use taskloop id or parent task id? What happens if two concurrent running taskloops have the same id?
+      // #pragma omp critical
+      // {
+      //   std::cout << "[JING] Task " << static_cast<int>(taskdata->td_task_id) << " completed " << shared_task_completions[taskdata->td_taskloop_id].load() << " times" << std::endl;
+      // }
+      
+      // Check if the taskloop finishes the training at the current frequency
+      if(shared_task_completions[taskdata->td_taskloop_id].load() == taskdata->td_taskwidth){ // If all spawned tasks finished 
+          shared_task_completions[taskdata->td_taskloop_id].store(0); // Reset the counter
+          if(!all_clusters_trained.load() && !prediction_finished.load()) {
+              bool all_complete = true;
+              for(int i = 0; i < CLUSTER_AMOUNT; i++) {
+                  if(!cluster_trained[i].load()) {  // Only process if cluster hasn't completed both frequencies
+                      all_complete = false;  // Mark as incomplete if any cluster isn't done
+                      bool current_freq_completed = true;
+#if CLUSTER_AMOUNT > 1
+                      std::lock_guard<std::mutex> lock(freq_check_mutex[i]);
+#endif
+                      for(int j = 1; j <= CLUSTER_SIZE(i); j*=2) {
+                          for(int k = 0; k <= max_task_loop_id; k++) {
+                              if(__kmp_ptt_get(curr_memory_freq_index, curr_cpu_freq_index[i], k, i, j) == 0) {
+                                  current_freq_completed = false;
+                                  break;
+                              }
+                          }
+                          if(!current_freq_completed) {
+                              break;
+                          }
+                      }
+                  
+                      if(current_freq_completed) {
+                          int freq_index = (curr_cpu_freq_index[i] == FREQ_HIGH_IDX) ? 0 : 1;
+                          cluster_freq_completed[i][freq_index].store(true);
+
+                          if(curr_cpu_freq_index[i] == FREQ_HIGH_IDX) {
+                              // First frequency completed, switch to second frequency
+                              #pragma omp critical
+                              {
+                                if(curr_cpu_freq_index[i] != FREQ_MED_IDX){
+                                  __kmp_cpu_freq_switch(i, FREQ_MED_IDX);
+#if DEBUG_PRINT_TASK_INFO
+                                  std::cout << "[JING] thread " << __kmp_tid_from_gtid(gtid) << ": Cluster " << i << " completed first frequency, switching to second frequency" << std::endl;
+#endif                        
+                                }
+                              }
+                          } else {
+                              // Both frequencies completed
+                              cluster_trained[i].store(true);
+                              #pragma omp critical
+                              {
+                                if(curr_cpu_freq_index[i] != FREQ_HIGH_IDX){
+                                  __kmp_cpu_freq_switch(i, FREQ_HIGH_IDX);
+#if DEBUG_PRINT_TASK_INFO
+                                  std::cout << "[JING] thread " << __kmp_tid_from_gtid(gtid) << ": Cluster " << i << " completed both frequencies! Now switch to the highest" << std::endl;
+#endif
+                                }         
+                              }
+                          }
+                      }
+                  }
+              }
+              if(all_complete) {
+                  #pragma omp critical
+                  {
+                      if(!all_clusters_trained.load()) {
+                          all_clusters_trained.store(true);
+                          auto end = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                          // std::cout << "********** ********** Training phase at " << end << " ********** ********** " << std::endl;
+                          std::cout << "********** ********** Finished training phase for all clusters at both frequencies at " << end << " ********** ********** " << std::endl;
+                          __kmp_compute_memory_boundness();
+                          __kmp_start_prediction();
+                          auto start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                          std::cout << "********** ********** Prediction phase finished at " << start << " ********** ********** " << std::endl;
+                          __kmp_print_perf_table(); 
+                      }
+                  }
+              }
+          }
+      }
   }
-// #if DEBUG_PRINT_TASK_INFO
-//   #pragma omp critical
-//   {
-//     std::cout << "[JING] __kmp_task_finish: Thread "<< __kmp_tid_from_gtid(gtid) << " finishing task " << taskdata->td_task_id << std::endl;  
-//   }
-// #endif
   //ME2
 
 #if KMP_DEBUG
@@ -4307,16 +4419,6 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
 #endif // BUILD_TIED_TASK_STACK
       }
       task_team->tt.tt_max_threads = nthreads;
-      //ME1
-// #if DEBUG_PRINT_THREAD_INFO     
-//       std::cout << "[JING] Initializing ERASE scheduler, nthreads: " << (int)nthreads << ", maxthreads: " << (int)maxthreads << std::endl;
-// #endif
-//       __kmp_scheduler_init();
-// #if DEBUG_PRINT_THREAD_INFO
-//       std::cout << "[JING] Initializing Performance Model" << std::endl;
-// #endif
-//       __kmp_ptt_init(); // __kmp_performance_model_init();
-      //ME2
     } else {
       // If array has (more than) enough elements, go ahead and use it
       KMP_DEBUG_ASSERT(*threads_data_p != NULL);
@@ -4850,68 +4952,6 @@ static void __kmp_perf_disable(kmp_info_t *thread){
 }
 #endif
 
-/*
-// Initialized the performance model struct
-static void __kmp_performance_model_init(){
-    std::lock_guard<std::mutex> lock(performance_model_m);
-    for(int i = 0; i < CLUSTER_AMOUNT; i++){
-        for (int j = 0; j < CLUSTER_SIZE; j++){
-            //TODO currently not using frequency, may wanna remove this
-            kmp_perf_p->frequencies[i][j] = 0;
-        }
-        for (int j = 0; j < TASK_TYPES; j++){
-            for (int k = 0; k < CLUSTER_SIZE; k++) {
-                kmp_perf_p->execution_times[i][j][k] = 0;
-            }
-        }
-    }
-}
-*/
-
-/*
-// Resets the performance model struct for given cluster
-// To be used when the frequency for the cluster is changed
-// Currently unused
-static void __kmp_performance_model_reset(kmp_uint8 cluster){
-    for (int i = 0; i < TASK_TYPES; i++){
-        for (int j = 0; j < CLUSTER_SIZE; j++){
-            kmp_perf_p->execution_times[cluster][i][j] = 0;
-        }
-    }
-}
-*/
-
-/*
-// Add a new execution time sample for the performance model
-// TODO if the width is more then one, we need to gather the other execution times also
-static void __kmp_performance_model_add(kmp_uint8 cluster, kmp_uint8 tasktype, kmp_uint32 execution_time, kmp_uint8 width) {
-    std::lock_guard<std::mutex> lock(performance_model_m);
-    //Check if frequency differs with some error margin with current, if so reset the performance model...
-    //TODO Removed frequency since counters are expensive, make assumption based on the execution time instead..
-
-    //  if (freq != kmp_perf_p->frequencies[cluster]) {
-    //     __kmp_performance_model_reset(cluster);
-    //  }
-    
-    int width_index = width - 1;
-    //printf("Number of entries in cluster %d = %d, with width = %d\n", cluster, kmp_sched_p->cluster_tid_entries[cluster], width);
-    if (kmp_sched_p->cluster_tid_entries[cluster] < width) return;
-    // TODO fix width associated variables, for example if the width is 4, await 4 results before adding etc.
-
-    // printf("Adding performance model, cluster = %hhu, tasktype = %hhu, execution time = %u, width = %hhu\n"
-    //        ,cluster, tasktype, execution_time, width);
-
-    // No previous record, just add the value
-    if (kmp_perf_p->execution_times[cluster][tasktype][width_index] == 0){
-        kmp_perf_p->execution_times[cluster][tasktype][width_index] = execution_time;
-    }
-    // Previous record exist, calculate a weighted value
-    else{
-        kmp_perf_p->execution_times[cluster][tasktype][width_index] =
-                (4 * kmp_perf_p->execution_times[cluster][tasktype][width_index] + execution_time) / 5;
-    }
-}
-*/
 #if (INTERPOLATION == POLYNOMIAL) || (INTERPOLATION == PMNF)
 static double calculate_scale(const kmp_uint8 cluster, const kmp_uint8 tasktype, const int norm_values[]){
     int values = 0;
@@ -4975,61 +5015,325 @@ static kmp_uint32 __kmp_performance_model_get(const kmp_uint8 cluster, const kmp
 }
 */
 
-static void __kmp_optimal_config_add(kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width){ // Add by Jing
-    kmp_perf_p->optimal_cluster[taskloop_id] = cluster;
-    kmp_perf_p->optimal_width[taskloop_id] = width;
-}
+// static void __kmp_optimal_config_add(kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width, kmp_uint8 cpu_freq_idx, kmp_uint8 mem_freq_idx){ // Add by Jing
+//     kmp_perf_p->opt_cluster[taskloop_id] = cluster;
+//     kmp_perf_p->opt_width[taskloop_id] = width;
+//     kmp_perf_p->opt_cpu_freq_idx[taskloop_id] = cpu_freq_idx;
+//     kmp_perf_p->opt_mem_freq_idx[taskloop_id] = mem_freq_idx;
+// }
 
-static kmp_uint8 __kmp_optimal_cluster_get(const kmp_uint8 taskloop_id){ // Add by Jing
-    return kmp_perf_p->optimal_cluster[taskloop_id];
-}
+static void __kmp_print_perf_table() {
+    // Helper function to print header row
+    auto print_width_header = []() {
+        for (int k = 1; k <= CLUSTER_MAX_SIZE; k *= 2) {
+            std::cout << std::setw(10) << "W" + std::to_string(k);
+        }
+        std::cout << std::endl;
+    };
 
-static kmp_uint8 __kmp_optimal_width_get(const kmp_uint8 taskloop_id){ // Add by Jing
-    return kmp_perf_p->optimal_width[taskloop_id];
-}
+    // Helper function to print one row of data
+    auto print_cluster_row = [&](int w, int z, int taskId, int clusterId) {
+        std::cout << "C" << clusterId;
+        for (int k = 1; k <= CLUSTER_MAX_SIZE; k *= 2) {
+            std::cout << std::setw(10) << std::fixed << std::setprecision(4) 
+                     << kmp_perf_p->performance_table[w][z][clusterId][k-1][taskId];
+        }
+        std::cout << std::endl;
+    };
 
-// Add by Jing: Initialized the PTT
-static void __kmp_ptt_init(){
-    std::lock_guard<std::mutex> lock(performance_model_m);
-    for(int i = 0; i < TASKLOOP_ID; i++){
-        for (int j = 0; j < CLUSTER_AMOUNT; j++){
-            for (int k = 0; k < CLUSTER_SIZE; k++) {
-                kmp_perf_p->performance_table[i][j][k] = 0;
+    for (int w = 0; w < MEMORY_FREQ_AMOUNT; w++) {
+        for (int z = 0; z < CPU_FREQ_AMOUNT; z++) {
+            std::cout << "\nMemory Freq " << available_memory_frequency[w] << ", CPU Freq " << available_cpu_frequency[z] << ":";
+            for (int i = 0; i <= max_task_loop_id; i++) {
+                std::cout << "\n    Taskloop " << i << ":\n";
+                print_width_header();
+                for (int j = 0; j < CLUSTER_AMOUNT; j++) {
+                    print_cluster_row(w, z, i, j);
+                }
             }
         }
     }
 }
 
-static void __kmp_ptt_add(kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width, kmp_uint32 execution_time){ // Add by Jing
+static void __kmp_ptt_add(kmp_uint8 mem_freq_idx, kmp_uint8 cpu_freq_idx, kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width, kmp_uint32 execution_time){ // Add by Jing
     std::lock_guard<std::mutex> lock(performance_model_m);
     int width_index = width - 1;
     if (kmp_sched_p->cluster_tid_entries[cluster] < width) return;
-    if (kmp_perf_p->performance_table[taskloop_id][cluster][width_index] == 0){
-        kmp_perf_p->performance_table[taskloop_id][cluster][width_index] = execution_time;
+    if (kmp_perf_p->performance_table[mem_freq_idx][cpu_freq_idx][cluster][width_index][taskloop_id] == 0){
+        kmp_perf_p->performance_table[mem_freq_idx][cpu_freq_idx][cluster][width_index][taskloop_id] = execution_time;
     }
     // Previous record exist, calculate a weighted value
     else{
-        kmp_perf_p->performance_table[taskloop_id][cluster][width_index] =
-                (4 * kmp_perf_p->performance_table[taskloop_id][cluster][width_index] + execution_time) / 5;
+        kmp_perf_p->performance_table[mem_freq_idx][cpu_freq_idx][cluster][width_index][taskloop_id] =
+                (4 * kmp_perf_p->performance_table[mem_freq_idx][cpu_freq_idx][cluster][width_index][taskloop_id] + execution_time) / 5;
     }
 }
 
-static kmp_uint32 __kmp_ptt_get(kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width){ // Add by Jing
-    return kmp_perf_p->performance_table[taskloop_id][cluster][width - 1];
+static kmp_uint32 __kmp_ptt_get(kmp_uint8 mem_freq_idx, kmp_uint8 cpu_freq_idx, kmp_uint8 taskloop_id, kmp_uint8 cluster, kmp_uint8 width){ // Add by Jing
+    return kmp_perf_p->performance_table[mem_freq_idx][cpu_freq_idx][cluster][width - 1][taskloop_id];
+}
+
+static void __kmp_cpu_freq_switch(kmp_uint8 cluster, kmp_uint8 freq_index){
+#if TX2
+    int core;
+    if (cluster == 0) {
+        // Assuming you want to target the first core in cluster 0
+        core = 0; // or choose from {0, 3, 4, 5}
+    } else if (cluster == 1) {
+        // Assuming you want to target the first core in cluster 1
+        core = 1; // or choose from {1, 2}
+    } else {
+        // Handle error or default case
+        return;
+    }
+    std::ofstream FreqTune("/sys/devices/system/cpu/cpu" + std::to_string(core) + "/cpufreq/scaling_setspeed");
+#endif
+    if (!FreqTune.is_open()){
+      std::cerr << "Somthing failed while opening the file! " << std::endl;
+      return;
+    }
+    FreqTune << std::to_string(available_cpu_frequency[freq_index]) << std::endl;
+    FreqTune.close();
+    curr_cpu_freq_index[cluster] = freq_index;
+}
+
+static void __kmp_mem_freq_switch(kmp_uint8 freq_index){
+#if TX2
+    std::ofstream EMC("/sys/kernel/debug/bpmp/debug/clk/emc/rate"); // edit chip memory frequency - TX2 specific
+#endif
+    if (!EMC.is_open()){
+      std::cerr << "[DEBUG] failed while opening the DDR setspeed file! " << std::endl;
+      return;
+    }
+    EMC << std::to_string(available_memory_frequency[freq_index]) << std::endl;
+    EMC.close();
+    curr_memory_freq_index = freq_index; /* Update the current Memory frequency index */
+}
+
+static void __kmp_compute_memory_boundness(){
+    // Compute memory-boundness for each taskloop, cluster and core count
+    double freq_ratio = double(available_cpu_frequency[FREQ_HIGH_IDX]) / double(available_cpu_frequency[FREQ_MED_IDX]); 
+    for(int taskloop = 0; taskloop <= max_task_loop_id; taskloop++) {
+        for(int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
+            for(int cores = 1; cores <= CLUSTER_SIZE(cluster); cores*=2) {
+                kmp_uint32 time_freq1 = __kmp_ptt_get(0, FREQ_HIGH_IDX, taskloop, cluster, cores);
+                kmp_uint32 time_freq2 = __kmp_ptt_get(0, FREQ_MED_IDX, taskloop, cluster, cores);
+                
+                // Calculate memory boundness if time_freq1 is valid
+                if(time_freq1 > 0) {
+                    double time_ratio = double(time_freq2) / double(time_freq1);
+                    MemoryBoundness[taskloop][cluster][cores-1] = (time_ratio - freq_ratio) / (1.0 - freq_ratio);
+                    
+                    // Sanitize the result
+                    if(MemoryBoundness[taskloop][cluster][cores-1] < 0.0) {
+                        MemoryBoundness[taskloop][cluster][cores-1] = 0.0;
+                    }
+                    if(MemoryBoundness[taskloop][cluster][cores-1] > 1.0) {
+                        MemoryBoundness[taskloop][cluster][cores-1] = 1.0;
+                    }
+// #if DEBUG_PRINT_TASK_INFO
+                    #pragma omp critical
+                    {
+                        std::cout << "[JING] Memory boundness for taskloop " << taskloop << ", cluster " << cluster << " with " << cores << " cores: " 
+                                 << MemoryBoundness[taskloop][cluster][cores-1] << std::endl; // " (time_ratio: " << time_ratio << ", freq_ratio: " << freq_ratio << ")" << 
+                    }
+// #endif
+                } else {
+#if DEBUG_PRINT_TASK_INFO
+                    #pragma omp critical
+                    {
+                        std::cout << "[WARNING] Zero execution time encountered for taskloop " << taskloop << ", cluster " << cluster << " with " << cores << " cores" << std::endl;
+                    }
+#endif
+                    MemoryBoundness[taskloop][cluster][cores-1] = 0.0;
+                }
+            }
+        }
+    }
+}
+
+// Initialize the performance model, CPU and memory power models
+static void __kmp_model_init(){
+    std::lock_guard<std::mutex> lock(performance_model_m);
+    for(int w = 0; w < MEMORY_FREQ_AMOUNT; w++){
+      for(int z = 0; z < CPU_FREQ_AMOUNT; z++){
+        for (int j = 0; j < CLUSTER_AMOUNT; j++){
+          for (int k = 0; k < CLUSTER_SIZE(j); k++) {
+            for(int i = 0; i < TASKLOOP_MAX_AMOUNT; i++){
+              kmp_perf_p->performance_table[w][z][j][k][i] = 0;
+              kmp_perf_p->cpu_power_table[w][z][j][k][i] = 0.0;
+              kmp_perf_p->ddr_power_table[w][z][j][k][i] = 0.0;
+            }
+          }
+        }
+      }
+    }
+    
+    std::ifstream infile1;
+    infile1.open("/home/nvidia/project/OpenMP-Moldability/openmp/runtime/src/HW_Perf_Model_Coefficients"); /* Read performance model coefficients */
+    if(infile1.fail()){
+      std::cout << "Failed to open performance model coefficients profile file!" << std::endl;
+      std::cin.get();
+      return;
+    }
+    std::string token0;
+    while(std::getline(infile1, token0)) {
+      std::istringstream line(token0);
+      int ii = 0; 
+      int clusterid = 0;
+      int width = 0;
+      while(line >> token0) {
+        if(ii == 0){ // first column is cluster index
+          clusterid = stoi(token0); 
+        }
+        if(ii == 1){ // Second column is available width
+          width = stoi(token0); 
+        }
+        if(ii > 1){
+          float coeff = stof(token0);
+          perf_model_coefficients[clusterid][width][ii-2] = coeff;
+          // std::cout << "perf_model_coefficients[" << clusterid << "][" << width << "][" << ii-2 << "] = " << perf_model_coefficients[clusterid][width][ii-2] << std::endl;
+        }
+        ii++;
+      }
+    }
+    infile1.close();
+
+    infile1.open("/home/nvidia/project/OpenMP-Moldability/openmp/runtime/src/HW_CPUPower_Model_Coefficients"); /* Read CPU Power model coefficients */
+    if(infile1.fail()){
+      std::cout << "Failed to open CPU power model coefficients profile file!" << std::endl;
+      std::cin.get();
+      return;
+    }
+    std::string token1;
+    while(std::getline(infile1, token1)) {
+      std::istringstream line(token1);
+      int ii = 0; 
+      int clusterid = 0;
+      int width = 0;
+      while(line >> token1) {
+        if(ii == 0){ // first column is cluster index
+          clusterid = stoi(token1); 
+        }
+        if(ii == 1){ // Second column is available width
+          width = stoi(token1); 
+        }
+        if(ii > 1){
+          float coeff = stof(token1);
+          cpu_power_model_coefficients[clusterid][width][ii-2] = coeff;
+          // std::cout << "cpu_power_model_coefficients[" << clusterid << "][" << width << "][" << ii-2 << "] = " << cpu_power_model_coefficients[clusterid][width][ii-2] << std::endl;
+        }
+        ii++;
+      }
+    }
+    infile1.close();
+
+    infile1.open("/home/nvidia/project/OpenMP-Moldability/openmp/runtime/src/HW_DDRPower_Model_Coefficients"); /* Read DDR Power model coefficients */
+    if(infile1.fail()){
+      std::cout << "Failed to open DDR power model coefficients profile file!" << std::endl;
+      std::cin.get();
+      return;
+    }
+    std::string token2;
+    while(std::getline(infile1, token2)) {
+      std::istringstream line(token2);
+      int ii = 0; 
+      int clusterid = 0;
+      int width = 0;
+      while(line >> token2) {
+        if(ii == 0){ // first column is cluster index
+          clusterid = stoi(token2); 
+        }
+        if(ii == 1){ // Second column is available width
+          width = stoi(token2); 
+        }
+        if(ii > 1){
+          float coeff = stof(token2);
+          memory_power_model_coefficients[clusterid][width][ii-2] = coeff;
+          // std::cout << "memory_power_model_coefficients[" << clusterid << "][" << width << "][" << ii-2 << "] = " << memory_power_model_coefficients[clusterid][width][ii-2] << std::endl;
+        }
+        ii++;
+      }
+    }
+    infile1.close();
+    
+    // Initialize the idle power consumption for each cluster
+    kmp_sched_p->idle_power[CLUSTER_A] = CLUSTER_A_POWER_IDLE;
+#if CLUSTER_AMOUNT > 1 && defined(CLUSTER_B_ACTIVE)
+    kmp_sched_p->idle_power[CLUSTER_B] = CLUSTER_B_POWER_IDLE;
+#endif
+}
+
+static void __kmp_start_prediction(){
+    // Start prediction for each taskloop, cluster and core count
+    if(!prediction_finished.load()){
+      // auto start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::lock_guard<std::mutex> lock(performance_model_m);
+        for(int taskloop = 0; taskloop <= max_task_loop_id; taskloop++) {
+            for(int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
+                for(int cores = 1; cores <= CLUSTER_SIZE(cluster); cores *= 2) {
+                    double memory_boundness = MemoryBoundness[taskloop][cluster][cores-1];
+                    kmp_uint32 time_highest = __kmp_ptt_get(0, 0, taskloop, cluster, cores);
+                    for(int mem_freq = 0; mem_freq < MEMORY_FREQ_AMOUNT; mem_freq++) {
+                        double ddr_freq_scaling = double(available_memory_frequency[0]) / double(available_memory_frequency[mem_freq]);
+                        for(int cpu_freq = 0; cpu_freq < CPU_FREQ_AMOUNT; cpu_freq++) {
+                            if(mem_freq == 0 && (cpu_freq == FREQ_HIGH_IDX || cpu_freq == FREQ_MED_IDX)) continue; // skip already measured values
+                            double cpu_freq_scaling = double(available_cpu_frequency[0]) / double(available_cpu_frequency[cpu_freq]);
+                            // Calculate time prediction
+                            kmp_uint32 time_prediction = time_highest * ((1-memory_boundness) * cpu_freq_scaling + perf_model_coefficients[cluster][cores][0] * memory_boundness + perf_model_coefficients[cluster][cores][1] * cpu_freq_scaling \
+                              + perf_model_coefficients[cluster][cores][2] * ddr_freq_scaling + perf_model_coefficients[cluster][cores][3] * pow(memory_boundness, 2) + perf_model_coefficients[cluster][cores][4] * memory_boundness * cpu_freq_scaling \
+                              + perf_model_coefficients[cluster][cores][5] * pow(cpu_freq_scaling, 2) + perf_model_coefficients[cluster][cores][6] * memory_boundness * ddr_freq_scaling + perf_model_coefficients[cluster][cores][7] * cpu_freq_scaling * ddr_freq_scaling \
+                              + perf_model_coefficients[cluster][cores][8] * pow(ddr_freq_scaling, 2) + perf_model_coefficients[cluster][cores][9]);
+                            kmp_perf_p->performance_table[mem_freq][cpu_freq][cluster][cores-1][taskloop] = time_prediction;
+                        }
+                    }
+                }
+            }
+        }
+        // Calculate cpu power consumption prediction
+        for(int taskloop = 0; taskloop <= max_task_loop_id; taskloop++) {
+            for(int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
+                for(int cores = 1; cores <= CLUSTER_SIZE(cluster); cores *= 2) {
+                    double memory_boundness = MemoryBoundness[taskloop][cluster][cores-1];
+                    for(int mem_freq = 0; mem_freq < MEMORY_FREQ_AMOUNT; mem_freq++) {
+                        for(int cpu_freq = 0; cpu_freq < CPU_FREQ_AMOUNT; cpu_freq++) {
+                            double cpufreq = available_cpu_frequency[cpu_freq] / 1000000.0;   
+                            double cpupower = cpu_power_model_coefficients[cluster][cores][0] * memory_boundness + cpu_power_model_coefficients[cluster][cores][1] * cpufreq + cpu_power_model_coefficients[cluster][cores][2] * memory_boundness * cpufreq \
+                              + cpu_power_model_coefficients[cluster][cores][3] * pow(cpufreq, 2) + cpu_power_model_coefficients[cluster][cores][4];       
+                            kmp_perf_p->cpu_power_table[mem_freq][cpu_freq][cluster][cores-1][taskloop] = cpupower;      
+                        }
+                    }
+                }
+            }
+        }
+        // Calculate ddr power consumption prediction 
+        for(int taskloop = 0; taskloop <= max_task_loop_id; taskloop++) {
+            for(int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
+                for(int cores = 1; cores <= CLUSTER_SIZE(cluster); cores *= 2) {
+                    double memory_boundness = MemoryBoundness[taskloop][cluster][cores-1];
+                    for(int mem_freq = 0; mem_freq < MEMORY_FREQ_AMOUNT; mem_freq++) {
+                        for(int cpu_freq = 0; cpu_freq < CPU_FREQ_AMOUNT; cpu_freq++) {
+                            double cpufreq = available_cpu_frequency[cpu_freq] / 1000000.0;    
+                            double ddrfreq = float(available_memory_frequency[mem_freq])/1000000000.0;
+                            double ddrpower = memory_power_model_coefficients[cluster][cores][0] * memory_boundness + memory_power_model_coefficients[cluster][cores][1] * cpufreq + memory_power_model_coefficients[cluster][cores][2] * ddrfreq \
+                              + memory_power_model_coefficients[cluster][cores][3] * pow(memory_boundness, 2) + memory_power_model_coefficients[cluster][cores][4] * memory_boundness * cpufreq + memory_power_model_coefficients[cluster][cores][5] * pow(cpufreq, 2) \
+                              + memory_power_model_coefficients[cluster][cores][6] * memory_boundness * ddrfreq + memory_power_model_coefficients[cluster][cores][7] * cpufreq * ddrfreq + memory_power_model_coefficients[cluster][cores][8] * pow(ddrfreq, 2) \
+                              + memory_power_model_coefficients[cluster][cores][9];
+                            kmp_perf_p->ddr_power_table[mem_freq][cpu_freq][cluster][cores-1][taskloop] = ddrpower; 
+                        }
+                    }
+                }
+            }
+        }
+        prediction_finished.store(true);
+        // auto end = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        // std::cout << "Prediction time: " << end - start << " ms" << std::endl;
+    }
 }
 
 // Update activity status, status 1 = active, status 0 = sleeping
 static void __kmp_thread_active_status(kmp_uint8 cluster, kmp_uint8 pos, kmp_uint8 status){
     kmp_sched_p->thread_active[cluster][pos] = status;
-}
-
-// Initialize the kmp_scheduler struct
-// static void __kmp_scheduler_init(kmp_info_t *thread){
-static void __kmp_scheduler_init(){
-  kmp_sched_p->idle_power[CLUSTER_A] = CLUSTER_A_POWER_IDLE;
-#if CLUSTER_AMOUNT > 1 && defined(CLUSTER_B_ACTIVE)
-  kmp_sched_p->idle_power[CLUSTER_B] = CLUSTER_B_POWER_IDLE;
-#endif
 }
 
 // Adds the calling threads cluster and tid to the scheduler
@@ -5062,6 +5366,29 @@ static kmp_uint8 __kmp_schedule_thread(kmp_task_t *task, kmp_info_t *thread, kmp
     // You are not in the optimal cluster, schedule on first thread in the optimal cluster
     return kmp_sched_p->cluster_tids[cluster][0];
 */
+    // Handle case for using all clusters when minimizing EDP 
+    if (cluster == CLUSTER_AMOUNT) {
+        int curr_task_id = assigned_task_count.fetch_add(1);
+        // Reset assigned_task_count when it reaches task_width
+        if (curr_task_id >= KMP_TASK_TO_TASKDATA(task)->td_taskwidth - 1) {  // -1 because we just fetch_add
+            assigned_task_count.store(0);
+        }
+        // std::cout << "Assigned task count: " << curr_task_id << std::endl;
+        // First fill cluster 0
+        if (curr_task_id < CLUSTER_SIZE(CLUSTER_A)) {
+            // std::cout << "Assigned to cluster 0 thread " << kmp_sched_p->cluster_tids[CLUSTER_A][curr_task_id] << std::endl;
+            return kmp_sched_p->cluster_tids[CLUSTER_A][curr_task_id];
+        } 
+#if CLUSTER_AMOUNT > 1 && defined(CLUSTER_B_ACTIVE)
+        // Then fill cluster 1 
+        else {
+            int core_index = (curr_task_id - CLUSTER_SIZE(CLUSTER_A)) % CLUSTER_SIZE(CLUSTER_B);
+            // std::cout << "Assigned to cluster 1 thread " << kmp_sched_p->cluster_tids[CLUSTER_B][core_index] << std::endl;
+            return kmp_sched_p->cluster_tids[CLUSTER_B][core_index];
+        }
+#endif
+    }
+
     // Initialize the thread selection to an invalid value
     int selected_thread = -1;
 
@@ -5072,7 +5399,8 @@ static kmp_uint8 __kmp_schedule_thread(kmp_task_t *task, kmp_info_t *thread, kmp
             selected_thread = next_thread;
             last_thread.store(next_thread);  // Update last_thread
             KMP_TASK_TO_TASKDATA(task)->td_no_steal = 1;
-            return selected_thread;
+            // return selected_thread;
+            return kmp_sched_p->cluster_tids[cluster][selected_thread];
         }
         last_thread.store(next_thread);  // Update last_thread for next attempt
     }
@@ -5087,26 +5415,12 @@ int unique_taskloop_id = 0;
 #endif
 
 static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid, kmp_uint64 max_split){
-#if DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO
-    if (global_taskcounter > 0){  // Add by Jing
-        std::cout << "Performance model update after " << global_taskcounter << " tasks" << std::endl; 
-        for(int i = 0; i < TASKLOOP_ID; i++){
-            std::cout << "Taskloop ID: " << i << std::endl;
-            for (int k = 0; k < CLUSTER_SIZE; ++k) {
-                std::cout <<  " \t \t " << "W" + std::to_string(k+1);
-            }
-            std::cout << std::endl;
-            for(int j = 0; j < CLUSTER_AMOUNT; j++){
-                std::cout << "Cluster " << j;
-                for(int k = 0; k < CLUSTER_SIZE; k++){
-                    std::cout <<  " \t " << kmp_perf_p->performance_table[i][j][k];
-                }
-                std::cout << std::endl;
-            }
-            // std::cout << std::endl;
-        }
-    }
-#endif
+// #if DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO
+//     if (global_taskcounter > 0){  // Add by Jing
+//         std::cout << "Performance model update after " << global_taskcounter << " tasks" << std::endl; 
+//         __kmp_print_perf_table();
+//     }
+// #endif
 
 #if DEBUG_PRINT_POWER_VALUES
     static int test = 0;
@@ -5127,7 +5441,8 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
     kmp_uint8 optimal_cluster;
     kmp_uint8 optimal_cluster_width;
-    // kmp_uint32 minimum_energy = UINT_MAX;
+    kmp_uint8 optimal_cpu_freq_index[CLUSTER_AMOUNT];
+    kmp_uint8 optimal_mem_freq_index;
     float minimum_energy = FLT_MAX;
 
 #if INTERPOLATION == ONLINE
@@ -5143,7 +5458,7 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
     if(__kmp_contains_def(task->routine)){
       task_type = __kmp_get_def(task->routine);
       taskloop_id = __kmp_get_taskloop_id(task->routine);
-      printf("task_type = %d, taskloop_id = %d\n", task_type, taskloop_id);
+      // printf("task_type = %d, taskloop_id = %d\n", task_type, taskloop_id);
     }
 #else
     if(__kmp_contains_taskloop(task->routine, taskdata->td_loop_iters)) {
@@ -5155,23 +5470,17 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
       task_type = TASK_UNDEFINED;
     }
     
-
     //TODO Debug remove
 #if DEBUG_PRINT_THREAD_INFO | DEBUG_PRINT_TASK_INFO | DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO | DEBUG_PRINT_TASKLOOP_SPLIT_INFO | EXPORT_DATA
     ++unique_taskloop_id;
     taskdata->td_unique_tid = unique_taskloop_id;
     taskdata->td_task_id = unique_taskloop_id;
 #endif
-
+    if(task_type != TASK_UNDEFINED){
     if(kmp_perf_p->get_optimal[taskloop_id] == 0){ // has not yet found the optimal cluster and width
-    if(task_type != TASK_UNDEFINED) {
-        // bool exit_loops = false; // Flag variable to signal breaking out of loops
-        kmp_uint8 cluster_width_max = 0; // Max allowed width for current task depending on cluster size and taskloop size
-        for (kmp_int32 curr_cluster = 0; curr_cluster < kmp_sched_p->num_clusters; curr_cluster++) {
-          cluster_width_max = (kmp_sched_p->cluster_tid_entries[curr_cluster]) < max_split ? kmp_sched_p->cluster_tid_entries[curr_cluster] : max_split;
-          ++cluster_width_max;
-          for(kmp_int32 cluster_width = 1; cluster_width < cluster_width_max; cluster_width++) {
-            kmp_uint32 exec_time = __kmp_ptt_get(taskloop_id, curr_cluster, cluster_width); // Add by Jing
+        for (int curr_cluster = 0; curr_cluster < CLUSTER_AMOUNT; curr_cluster++) {
+          for(int cluster_width = 1; cluster_width <= CLUSTER_SIZE(curr_cluster); cluster_width *= 2) {
+            kmp_uint32 exec_time = __kmp_ptt_get(curr_memory_freq_index, curr_cpu_freq_index[curr_cluster], taskloop_id, curr_cluster, cluster_width); // Add by Jing
             if(exec_time == 0){ // haven't trained this PTT entry yet 
               taskdata->td_cluster = curr_cluster;
               taskdata->td_taskwidth = cluster_width;
@@ -5179,37 +5488,34 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
 #if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
               #pragma omp critical
               {
-                printf("[JING] __kmp_taskloop: Task %d, training phase: Cluster = %d, Number of tasks = %hhu\n", taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
+                std::cout << "[JING] __kmp_taskloop: Task " << taskdata->td_task_id << ", training phase: Cluster = " << taskdata->td_cluster << ", Number of tasks = " << taskdata->td_taskwidth << std::endl;
               }
 #endif
-              // exit_loops = true; // Set the flag to signal exiting the loops
               return;
             }else{
               continue;
             }
           }
-        } // Finish the PTT training phase for the taskloop 
+        } 
 
-        // TODO For each execution place (cluster...) should be randomly selected
-        for (kmp_int32 curr_cluster = 0; curr_cluster < kmp_sched_p->num_clusters; curr_cluster++) {
-            cluster_width_max = (kmp_sched_p->cluster_tid_entries[curr_cluster]) < max_split ? kmp_sched_p->cluster_tid_entries[curr_cluster] : max_split;
-            ++cluster_width_max;
+        if(prediction_finished.load() == true){
+        for (int curr_cluster = 0; curr_cluster < CLUSTER_AMOUNT; curr_cluster++) {
 #if INTERPOLATION == ONLINE
             created_model = false;
 #endif
-            for(kmp_int32 cluster_width = 1; cluster_width < cluster_width_max; cluster_width++) {                
-                // kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster, task_type, cluster_width);
-                kmp_uint32 exec_time = __kmp_ptt_get(taskloop_id, curr_cluster, cluster_width); // Add by Jing: Get the execution time from the performance model  
+          for(int cluster_width = 1; cluster_width <= CLUSTER_SIZE(curr_cluster); cluster_width *= 2) {     
+            for(int mem_freq = 0; mem_freq < MEMORY_FREQ_AMOUNT; mem_freq++) {    
+              for(int cpu_freq = 0; cpu_freq < CPU_FREQ_AMOUNT; cpu_freq++) {
+                kmp_uint32 exec_time = __kmp_ptt_get(mem_freq, cpu_freq, taskloop_id, curr_cluster, cluster_width); // Add by Jing: Get the execution time from the performance model  
 #if COST_CLAUSE
-                // kmp_uint64 taskloop_recorded_cost = __kmp_get_cost_byid(taskdata->td_taskloop_id);
                 kmp_uint64 taskloop_recorded_cost = __kmp_get_cost_byid(taskloop_id);    
-#if DEBUG_PRINT_TASK_INFO
-                #pragma omp critical
-                {
-                  std::cout << "[JING] Taskloop ID: " << static_cast<int>(taskloop_id) << ", Cluster: " << curr_cluster << ", Width: " << cluster_width \
-                  << ", Execution time from PTT: " << exec_time << ", recorded cost: " << taskloop_recorded_cost << std::endl;
-                }
-#endif
+// #if DEBUG_PRINT_TASK_INFO
+//                 #pragma omp critical
+//                 {
+//                   std::cout << "[JING] Taskloop ID: " << static_cast<int>(taskloop_id) << ", Cluster: " << curr_cluster << ", Width: " << cluster_width \
+//                   << ", Execution time from PTT: " << exec_time << ", recorded cost: " << taskloop_recorded_cost << std::endl;
+//                 }
+// #endif
                 if(taskdata->td_cost != taskloop_recorded_cost){
                     exec_time = exec_time * taskdata->td_cost / taskloop_recorded_cost; // predict the execution time based on the cost
 #if DEBUG_PRINT_TASK_INFO
@@ -5255,10 +5561,9 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                 kmp_uint32 idle_power = kmp_sched_p->idle_power[curr_cluster];
                 kmp_uint8 number_active_cores[CLUSTER_AMOUNT] = {0};
 
-                for (kmp_int32 cluster = 0; cluster < kmp_sched_p->num_clusters; cluster++) {
+                for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
                     // first check if all threads per cluster are executing tasks or are sleeping
-                    for (kmp_int32 curr_thread = 0;
-                         curr_thread < kmp_sched_p->cluster_tid_entries[cluster]; curr_thread++) {
+                    for (int curr_thread = 1; curr_thread < CLUSTER_SIZE(cluster); curr_thread *= 2) {
                         if (kmp_sched_p->thread_active[cluster][curr_thread] == THREAD_AWAKE) {
                             number_active_cores[curr_cluster] += 1;
                         }
@@ -5304,8 +5609,9 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
                 // Get the running power consumption from the power profiler, depending on frequency etc
                 // TODO currently frequency independent, create function that gets the freq and calculates...
                 // Need the frequency for the performance model also
-                // kmp_uint32 
-                float total_power = (float)(idle_power + kmp_sched_p->runtime_power[curr_cluster][task_type][HIGH_FREQ_POWER][cluster_width - 1]) / 1000.0; // in Watts
+                double cpu_power = kmp_perf_p->cpu_power_table[mem_freq][cpu_freq][curr_cluster][cluster_width-1][taskloop_id];
+                double ddr_power = kmp_perf_p->ddr_power_table[mem_freq][cpu_freq][curr_cluster][cluster_width-1][taskloop_id];
+                double total_power = idle_power / 1000.0 + cpu_power + ddr_power; 
 // #if DEBUG_PRINT_TASK_INFO
 //                 #pragma omp critical
 //                 {
@@ -5315,63 +5621,289 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
 // #endif
                 // Calculate the energy based on the execution time and idle + runtime power consumption
                 // Depending on how we store the execution time we may need to change the scale of exec time here
-                float energy = ((float)exec_time / 1000000.0)  * total_power;
+#if ENERGY_MINIMIZATION
+                double energy = ((double)exec_time / 1000.0)  * total_power;  // execution time is in milliseconds
+#else
+                double edp = pow(((double)exec_time / 1000.0), 2) * total_power; // execution time is in milliseconds
+#endif
 #if DEBUG_PRINT_TASK_INFO
                 #pragma omp critical
                 {
-                  std::cout << "[JING] Idle power for cluster " << curr_cluster << ", width " << cluster_width << ": " << idle_power << ", runtime power: " \
-                  << kmp_sched_p->runtime_power[curr_cluster][task_type][HIGH_FREQ_POWER][cluster_width - 1] << ", total power: " << total_power << \
-                  ", execution time: " << exec_time << ", energy for cluster " << curr_cluster << ", width " << cluster_width << ": " << energy << " Joules." << std::endl;
+                  std::cout << "[JING] Using one cluster: Cluster " << curr_cluster << ", width " << cluster_width << ", CPU frequency: " << available_cpu_frequency[cpu_freq] << \
+                    ", DDR frequency: " << available_memory_frequency[mem_freq] << ", idle power: " << idle_power / 1000.0 << ", cpu power: " << cpu_power << ", DDR power: " << ddr_power \
+                    << ", total power: " << total_power << ", execution time: " << (double)exec_time / 1000.0;
+#if ENERGY_MINIMIZATION
+                    std::cout << ", energy : " << energy << std::endl;
+#else
+                    std::cout << ", EDP : " << edp << std::endl;
+#endif                    
                 }
 #endif
                 // If the energy is less than the current minimum, set this as the current minimum
-                if (energy < minimum_energy) {
+#if ENERGY_MINIMIZATION
+                if (energy < minimum_energy) 
+#else
+                if (edp < minimum_energy)
+#endif
+                {
 #if MEASURE_ACCURACY
                     taskdata->td_predicted_exectime = exec_time;
 #endif
                     optimal_cluster = curr_cluster;
-                    minimum_energy = energy;
                     optimal_cluster_width = cluster_width;
-#if DEBUG_PRINT_TASK_INFO
-                    std::cout << "[JING] New best cluster: " << (int)optimal_cluster << ", with width: " << (int)optimal_cluster_width 
-                    << " and minimum energy: " << minimum_energy << " Joules." << std::endl;
-#endif                    
+                    optimal_cpu_freq_index[curr_cluster] = cpu_freq;
+                    optimal_mem_freq_index = mem_freq;  
+#if ENERGY_MINIMIZATION
+                    minimum_energy = energy;
+#else
+                    minimum_energy = edp;
+#endif
+                }
+              }
+            }
+          }
+        }
+#if ENERGY_MINIMIZATION
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+        #pragma omp critical
+        {
+          std::cout << "[JING] Lowest Energy: Cluster = " << (int)optimal_cluster << ", Number of tasks = " << (int)optimal_cluster_width << ", CPU frequency = " 
+          << available_cpu_frequency[optimal_cpu_freq_index[optimal_cluster]] << ", DDR frequency = " << available_memory_frequency[optimal_mem_freq_index] << ", Energy = " << minimum_energy << std::endl;
+        }
+#endif
+#else
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+        #pragma omp critical
+        {
+          std::cout << "[JING] Lowest EDP: Cluster = " << (int)optimal_cluster << ", Number of tasks = " << (int)optimal_cluster_width << ", CPU frequency = " 
+          << available_cpu_frequency[optimal_cpu_freq_index[optimal_cluster]] << ", DDR frequency = " << available_memory_frequency[optimal_mem_freq_index] << ", EDP = " << minimum_energy << std::endl;
+        }
+#endif
+#endif
+        kmp_perf_p->opt_cluster[taskloop_id] = optimal_cluster;
+        kmp_perf_p->opt_width[taskloop_id] = optimal_cluster_width;
+        for(int i = 0; i < CLUSTER_AMOUNT; i++){
+          if(i != optimal_cluster){
+            kmp_perf_p->opt_cpu_freq_idx[taskloop_id][i] = CPU_FREQ_AMOUNT - 1; // set the CPU frequency to the lowest frequency for the idle clusters
+          }else{
+            kmp_perf_p->opt_cpu_freq_idx[taskloop_id][i] = optimal_cpu_freq_index[optimal_cluster]; // set the CPU frequency to the optimal frequency for the optimal cluster
+          }
+        }
+        kmp_perf_p->opt_mem_freq_idx[taskloop_id] = optimal_mem_freq_index;
+
+        // EDP minimization: how to distribute the iterations among all the clusters and find out the best frequency
+#if ENERGY_MINIMIZATION == 0 and CLUSTER_AMOUNT > 1
+        // int using_all_cores = 0;
+        long double time_ratio[CLUSTER_AMOUNT] = {0.0};
+        long double optimal_ratio[CLUSTER_AMOUNT] = {0.0};
+        long double speed_ratio[CLUSTER_AMOUNT] = {0.0};
+        double prediction_time[CLUSTER_AMOUNT] = {0.0};
+        for(int mem_freq = 0; mem_freq < MEMORY_FREQ_AMOUNT; mem_freq++) {
+            // Generate all possible CPU frequency combinations for clusters
+            int cpu_freq_combinations[CLUSTER_AMOUNT] = {0};
+            bool exit_flag = false; 
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+            #pragma omp critical
+            {
+              std::cout << "[JING] Using all cores: DDR frequency = " << available_memory_frequency[mem_freq] << std::endl;
+            }
+#endif  
+            while(!exit_flag) {
+                double cpu_power = 0.0;
+                double ddr_power = 0.0;
+                kmp_uint32 idle_power = 0;
+                long double total_processing_power = 0.0;
+                kmp_uint32 exec_time[CLUSTER_AMOUNT] = {0};
+                double final_prediction_time = 0.0;
+                
+                // Compute power, execution time for current frequency combination
+                for (int curr_cluster = 0; curr_cluster < CLUSTER_AMOUNT; curr_cluster++) {
+                    int curr_cpu_freq = cpu_freq_combinations[curr_cluster];               
+                    cpu_power += kmp_perf_p->cpu_power_table[mem_freq][curr_cpu_freq][curr_cluster][CLUSTER_SIZE(curr_cluster)-1][taskloop_id];
+                    ddr_power += kmp_perf_p->ddr_power_table[mem_freq][curr_cpu_freq][curr_cluster][CLUSTER_SIZE(curr_cluster)-1][taskloop_id];
+                    idle_power += kmp_sched_p->idle_power[curr_cluster]; 
+                    
+                    exec_time[curr_cluster] = __kmp_ptt_get(mem_freq, curr_cpu_freq, taskloop_id, curr_cluster, CLUSTER_SIZE(curr_cluster));
+                    speed_ratio[curr_cluster] = 1000000.0 / (double)exec_time[curr_cluster];
+                    total_processing_power += speed_ratio[curr_cluster];
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+                    #pragma omp critical
+                    {
+                      std::cout << std::fixed << std::setprecision(6) << "Cluster " << curr_cluster << " freq " << available_cpu_frequency[curr_cpu_freq] << ", exec time " << exec_time[curr_cluster] << ", speed ratio " << speed_ratio[curr_cluster] << ", ";
+                    }
+#endif     
+                }
+                // std::cout<< "total processing power: " << total_processing_power << ", ";  
+                
+                // Compute time ratios and prediction times
+                for (int curr_cluster = 0; curr_cluster < CLUSTER_AMOUNT; curr_cluster++) {
+                    time_ratio[curr_cluster] = (speed_ratio[curr_cluster] * 1000.0) / (total_processing_power * 1000.0);
+                    prediction_time[curr_cluster] = (double)exec_time[curr_cluster] / 1000.0 * time_ratio[curr_cluster];
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+                    #pragma omp critical
+                    {
+                      std::cout << std::fixed << std::setprecision(6) << "ratio: " << time_ratio[curr_cluster] << ", prediction time of cluster " << curr_cluster << ": " << prediction_time[curr_cluster] << ", ";
+                    }
+#endif  
+                    final_prediction_time = std::max(final_prediction_time, prediction_time[curr_cluster]);
+                }
+                
+                // Compute EDP
+                double edp = pow(final_prediction_time, 2) * (idle_power / 1000.0 + cpu_power + ddr_power);
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+                #pragma omp critical
+                {
+                  std::cout << std::fixed << std::setprecision(6) << "cpu power " << cpu_power << ", DDR power " << ddr_power << ", idle power " << idle_power / 1000.0 << ", final_prediction_time " << final_prediction_time << ", EDP = " << edp << std::endl;
+                }
+#endif  
+                
+                // Update minimum energy configuration
+                if(edp < minimum_energy){
+                    for(int i = 0; i < CLUSTER_AMOUNT; i++) {
+                        optimal_cpu_freq_index[i] = cpu_freq_combinations[i];
+                        optimal_ratio[i] = time_ratio[i];
+                    }
+                    optimal_mem_freq_index = mem_freq;
+                    minimum_energy = edp;  
+                    using_all_cores[taskloop_id] = 1;
+                }
+                
+                // Generate next frequency combination
+                int cluster = CLUSTER_AMOUNT - 1;
+                while(cluster >= 0) {
+                    cpu_freq_combinations[cluster]++;
+                    if(cpu_freq_combinations[cluster] < CPU_FREQ_AMOUNT){
+                       break;
+                    }
+                    cpu_freq_combinations[cluster] = 0;
+                    cluster--;
+                }
+                // Exit when all combinations are exhausted
+                if(cluster < 0){
+                    exit_flag = true;
                 }
             }
         }
-        taskdata->td_taskwidth = optimal_cluster_width; //TODO Move this out to its own function, should return the optimal cluster and width instead
-        taskdata->td_cluster = optimal_cluster;
-        __kmp_optimal_config_add(taskloop_id, optimal_cluster, optimal_cluster_width); // Add by Jing
-        kmp_perf_p->get_optimal[taskloop_id] = 1; // Get the optimal cluster and width
+        if(using_all_cores[taskloop_id] == 1){
 #if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
-        printf("[JING] __kmp_taskloop: Taskloop = %d, optimal decision: Cluster = %d, Number of tasks = %hhu\n", taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
+          #pragma omp critical
+          {
+            std::cout << "[JING] Lowest EDP: ";
+            for(int i = 0; i < CLUSTER_AMOUNT; i++) {
+                std::cout << "Cluster " << i << " CPU frequency = " << available_cpu_frequency[optimal_cpu_freq_index[i]] << ", ";
+            }
+            std::cout << "DDR frequency = " << available_memory_frequency[optimal_mem_freq_index] << ", EDP = " << minimum_energy << std::endl;
+          }
 #endif
-    }
-    else{
-        // TODO If tasktype is unknown, select fastest? cluster for identification
-        // TODO Change to max number of clusters...
-// #if CLUSTER_AMOUNT > 1
-        // int random_value = std::rand() % CLUSTER_AMOUNT; 
-        // optimal_cluster = (random_value == 0) ? CLUSTER_A : CLUSTER_B; 
-        // optimal_cluster_width = 2; // Tested: seems not good for perf counters 
-        
-        // const int clusters[] = { CLUSTER_A, CLUSTER_B, CLUSTER_C /* Add more clusters as needed */ }; // when cluster amount > 2
-        // optimal_cluster = clusters[random_value];
-// #else
+          kmp_perf_p->opt_cluster[taskloop_id] = CLUSTER_AMOUNT; // set the optimal cluster to all clusters
+          kmp_perf_p->opt_width[taskloop_id] = 0; 
+          for(int i = 0; i < CLUSTER_AMOUNT; i++){
+            kmp_perf_p->opt_width[taskloop_id] += CLUSTER_SIZE(i); // set the optimal width to the total number of cores in all clusters
+            kmp_perf_p->opt_cpu_freq_idx[taskloop_id][i] = optimal_cpu_freq_index[i]; // set the CPU frequency to the optimal frequency for each cluster
+          }
+          kmp_perf_p->opt_mem_freq_idx[taskloop_id] = optimal_mem_freq_index;
+          
+          kmp_uint64 distributed_accumulated_iters = 0;
+          kmp_uint64 loop_iters_distribution[CLUSTER_AMOUNT] = {0};
+          kmp_uint64 task_iters = taskdata->td_loop_iters;
+          for (int curr_cluster = 0; curr_cluster < CLUSTER_AMOUNT; curr_cluster++) {
+            if(curr_cluster == CLUSTER_AMOUNT - 1){
+              loop_iters_distribution[curr_cluster] = taskdata->td_loop_iters - distributed_accumulated_iters;
+            }else{
+              loop_iters_distribution[curr_cluster] = customRound(optimal_ratio[curr_cluster] * static_cast<int>(taskdata->td_loop_iters));
+              distributed_accumulated_iters += loop_iters_distribution[curr_cluster];
+            }
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+            #pragma omp critical
+            {
+              std::cout << "[JING] Ratio for cluster " << curr_cluster << ": " << optimal_ratio[curr_cluster] << ", loop distribution " << loop_iters_distribution[curr_cluster] << " iterations" << std::endl;
+            }
+#endif
+            task_iters = std::min(task_iters, loop_iters_distribution[curr_cluster] / CLUSTER_SIZE(curr_cluster));
+          }
+          task_iters = std::min(task_iters, max_split);
+          kmp_perf_p->opt_width[taskloop_id] = taskdata->td_loop_iters / task_iters;
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+          #pragma omp critical
+          {
+            std::cout << "Determined iter per task " << task_iters << ", number of tasks = " << static_cast<int>(kmp_perf_p->opt_width[taskloop_id]) << std::endl;
+          }
+#endif
+        }
+#endif
+        kmp_perf_p->get_optimal[taskloop_id] = 1; // By far we obtain the optimal configuration for the taskloop
+        taskdata->td_taskwidth = kmp_perf_p->opt_width[taskloop_id];
+        taskdata->td_cluster = kmp_perf_p->opt_cluster[taskloop_id];
+        for(int i = 0; i < CLUSTER_AMOUNT; i++){
+          taskdata->td_cpu_freq_idx[i] = kmp_perf_p->opt_cpu_freq_idx[taskloop_id][i];
+        }
+        taskdata->td_mem_freq_idx = kmp_perf_p->opt_mem_freq_idx[taskloop_id];
+    }else{ // there is a chance that training phase is finished, but the prediction is not finished yet
+        // Randomly select a cluster and width for the taskloop
+#if CLUSTER_AMOUNT > 1
+        int random_value = std::rand() % CLUSTER_AMOUNT; 
+        taskdata->td_cluster = (random_value == 0) ? CLUSTER_A : CLUSTER_B; 
+        taskdata->td_taskwidth = CLUSTER_SIZE(random_value);
+#else
         taskdata->td_cluster = CLUSTER_A;
         taskdata->td_taskwidth = 1;
-#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
-        printf("[JING] __kmp_taskloop: Taskloop = %d, training phase: Cluster = %d, Number of tasks = %hhu\n", taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
 #endif
-// #endif
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+        #pragma omp critical
+        {
+          std::cout << "[JING] Taskloop ID: " << taskdata->td_task_id << ", Cluster " << taskdata->td_cluster << ", Width " << taskdata->td_taskwidth << std::endl;
+        }
+#endif
     }
     }else{
-      taskdata->td_taskwidth = __kmp_optimal_width_get(taskloop_id); 
-      taskdata->td_cluster = __kmp_optimal_cluster_get(taskloop_id); 
+      taskdata->td_taskwidth = kmp_perf_p->opt_width[taskloop_id];
+      taskdata->td_cluster =  kmp_perf_p->opt_cluster[taskloop_id];
+      for(int i = 0; i < CLUSTER_AMOUNT; i++){
+        taskdata->td_cpu_freq_idx[i] = kmp_perf_p->opt_cpu_freq_idx[taskloop_id][i];
+      }
+      taskdata->td_mem_freq_idx = kmp_perf_p->opt_mem_freq_idx[taskloop_id];
 #if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
-      printf("[JING] __kmp_taskloop: Taskloop = %d, optimal decision: Cluster = %d, Number of tasks = %hhu\n", taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
+      #pragma omp critical
+      {
+        std::cout << "[JING] Taskloop ID: " << taskdata->td_task_id << ", optimal decision: Cluster " << taskdata->td_cluster << ", Width " << taskdata->td_taskwidth; 
+        for(int i = 0; i < CLUSTER_AMOUNT; i++){
+          std::cout << ", cluster " << i << " freq " << available_cpu_frequency[taskdata->td_cpu_freq_idx[i]];
+        }
+        std::cout << ", DDR freq " << available_memory_frequency[taskdata->td_mem_freq_idx] << std::endl;
+      }
 #endif
     }
+    }else{
+      taskdata->td_taskwidth = 1;
+      taskdata->td_cluster = CLUSTER_A;
+#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
+      printf("[JING] __kmp_taskloop: Taskloop = %d, training phase: Cluster = %d, Number of tasks = %hhu\n", taskdata->td_task_id, taskdata->td_cluster, taskdata->td_taskwidth);
+#endif
+    }
+    // Tuning the cpu and ddr frequency for the taskloop if necessary
+    if(all_clusters_trained && kmp_perf_p->get_optimal[taskloop_id] == 1){
+        for(int i = 0; i < CLUSTER_AMOUNT; i++){
+          if(curr_cpu_freq_index[i] != taskdata->td_cpu_freq_idx[i]){
+              __kmp_cpu_freq_switch(i, taskdata->td_cpu_freq_idx[i]); 
+#if DEBUG_PRINT_THREAD_INFO
+              #pragma omp critical
+              {
+                std::cout << "[JING] Switch frequency of cluster " << i << " to " << available_cpu_frequency[curr_cpu_freq_index[i]] << std::endl;
+              }
+#endif
+          }
+        }
+        if(curr_memory_freq_index != taskdata->td_mem_freq_idx){
+            __kmp_mem_freq_switch(taskdata->td_mem_freq_idx);
+#if DEBUG_PRINT_THREAD_INFO
+            #pragma omp critical
+            {
+              std::cout << "[JING] Switch memory frequency to " << available_memory_frequency[curr_memory_freq_index] << std::endl;
+            }
+#endif
+        }
+    }
+    
 #if TEST_DIFFERENT_WIDTH
     static int width = 1;
     static int width_it = 0;
@@ -5419,34 +5951,22 @@ static void __kmp_taskloop_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int
 }
 
 static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_int32 tid) {
-    //debug
-// #if DEBUG_PRINT_TASK_PERFORMANCE_MODEL_INFO
-//     if (global_taskcounter % 10 == 0){
-//         printf("Performance model update after %d tasks\nExecution times : CPU | CACHE | MEMORY\n",
-//                global_taskcounter);
-//         for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
-//             printf("                | %d  | %d    | %d\n", kmp_perf_p->execution_times[cluster][TASK_CPU][0],
-//                    kmp_perf_p->execution_times[cluster][TASK_CACHE][0],
-//                    kmp_perf_p->execution_times[cluster][TASK_MEMORY][0]);
-//         }
-//     }
-// #endif
     kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
     kmp_uint8 optimal_cluster;
     kmp_uint32 minimum_energy = UINT_MAX;
 
     if (taskdata->td_task_type != TASK_UNDEFINED) {
         // TODO For each execution place (cluster...) should be randomly selected, don't think this is necessary?
-        for (kmp_int32 curr_cluster = 0; curr_cluster < kmp_sched_p->num_clusters; curr_cluster++) {
+        for (int curr_cluster = 0; curr_cluster < CLUSTER_AMOUNT; curr_cluster++) {
             // first check if all threads per curr_cluster are executing tasks or are sleeping
             // Get idle power consumption, if cores of an entire cluster are sleeping
             kmp_uint32 idle_power = kmp_sched_p->idle_power[curr_cluster];
-            for (kmp_int32 cluster = 0; cluster < kmp_sched_p->num_clusters;cluster++) {
+            for (int cluster = 0; cluster < CLUSTER_AMOUNT; cluster++) {
                 if (curr_cluster == cluster) continue;
 
                 // the idle power consumption is shared between current cluster and the idle clusters.
                 kmp_uint8 cluster_awake = 0;
-                for (kmp_int32 curr_thread = 0; curr_thread < kmp_sched_p->cluster_tid_entries[cluster]; curr_thread++) {
+                for (int curr_thread = 1; curr_thread < CLUSTER_SIZE(cluster); curr_thread *= 2) {
                     if (kmp_sched_p->thread_active[cluster][curr_thread] == THREAD_AWAKE) {
                         cluster_awake = 1;
                         break;
@@ -5462,12 +5982,11 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
 
             // Get the execution time from the performance model
             // kmp_uint32 exec_time = __kmp_performance_model_get(curr_cluster, taskdata->td_task_type, 1);
-            kmp_uint32 exec_time = __kmp_ptt_get(taskdata->td_taskloop_id, curr_cluster, 1); // Add by Jing
+            kmp_uint32 exec_time = __kmp_ptt_get(curr_memory_freq_index, curr_cpu_freq_index[curr_cluster], taskdata->td_taskloop_id, curr_cluster, 1); // Add by Jing
             
             // Calculate the energy based on the execution time and idle + runtime power consumption
             // Depending on how we store the execution time we may need to change the scale of exec time here
             kmp_uint32 energy = exec_time * total_power;
-
 
             // If the energy is less than the current minimum, set this as the current minimum
             if (energy < minimum_energy) {
@@ -5486,7 +6005,7 @@ static kmp_int32 __kmp_task_mapping(kmp_info_t *thread, kmp_task_t *task, kmp_in
     // We now have the optimal cluster
     // schedule task on optimal thread right now picks the first sleeping thread it finds
     // If unable to find a sleeping thread, schedule task on yourself
-    for (int i = 0; i < kmp_sched_p->cluster_tid_entries[optimal_cluster]; i++){
+    for (int i = 1; i < CLUSTER_SIZE(optimal_cluster); i*=2){
         if (kmp_sched_p->thread_active[optimal_cluster][i] == THREAD_SLEEP){
             return kmp_sched_p->cluster_tids[optimal_cluster][i]; // return first available thread
         }
@@ -5547,7 +6066,6 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task, kmp_i
   }
 
   // If the task has run before, get the task type
-
   kmp_int32 tid_sched;
   if(taskdata->td_cluster == CLUSTER_UNASSIGNED){
       // Task mapping algorithm, returns the tid of preferable thread to schedule
@@ -5584,13 +6102,13 @@ static kmp_int32 __kmp_schedule_task(kmp_info_t *thread, kmp_task_t *task, kmp_i
 
   current = thread_sched->th.th_current_task;
 
-  if (!__kmp_task_is_allowed(sched_gtid, 1, taskdata, current)){
-      taskdata->td_no_steal = 0;
-#if DEBUG_PRINT_THREAD_INFO
-      printf("Task not allowed for thread %d\n", tid_sched);
-#endif
-      return TASK_SCHEDULE_SELF;
-  }
+//   if (!__kmp_task_is_allowed(sched_gtid, 1, taskdata, current)){
+//       taskdata->td_no_steal = 0;
+// #if DEBUG_PRINT_THREAD_INFO
+//       printf("Task not allowed for thread %d\n", tid_sched);
+// #endif
+//       return TASK_SCHEDULE_SELF;
+//   }
 
   if (__kmp_give_task(thread_sched, tid_sched, task, 1)) {
     // Putting target thread as awake, otherwise if there are more tasks incoming
@@ -6108,22 +6626,16 @@ void __kmp_taskloop_linear(ident_t *loc, int gtid, kmp_task_t *task,
     lower = upper + st; // adjust lower bound for the next iteration
   }
   // free the pattern task and exit
-//   kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-// #if DEBUG_PRINT_TASK_INFO
-//   #pragma omp critical
-//   {
-//     std::cout << "[JING] __kmp_taskloop_linear: Pattern Task " << taskdata->td_task_id << " on thread " << __kmp_tid_from_gtid(gtid) << ": no execution!" << std::endl;
-//   }
-// #endif
+  kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
+#if DEBUG_PRINT_TASK_INFO
+  #pragma omp critical
+  {
+    std::cout << "[TEST] __kmp_taskloop_linear: Pattern Task " << taskdata->td_task_id << " on thread " << __kmp_tid_from_gtid(gtid) << ": no execution!" << std::endl;
+  }
+#endif
   __kmp_task_start(gtid, task, current_task); // make internal bookkeeping
   // do not execute the pattern task, just do internal bookkeeping
   __kmp_task_finish<false>(gtid, task, current_task);
-// #if DEBUG_PRINT_TASK_INFO
-//   #pragma omp critical
-//   {
-//     std::cout << "[JING] __kmp_taskloop_linear: Pattern Task " << taskdata->td_task_id << " is finished on thread " << __kmp_tid_from_gtid(gtid) << std::endl;
-//   }
-// #endif
 }
 
 // Structure to keep taskloop parameters for auxiliary task
@@ -6385,8 +6897,7 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
   kmp_uint64 upper = task_bounds.get_ub();
   kmp_uint64 ub_glob = upper; // global upper used to calc lastprivate flag
   kmp_uint64 num_tasks = 0, extras = 0;
-  kmp_int64 last_chunk =
-      0; // reduce grainsize of last task by last_chunk in strict mode
+  kmp_int64 last_chunk = 0; // reduce grainsize of last task by last_chunk in strict mode
   kmp_uint64 num_tasks_min = __kmp_taskloop_min_tasks;
   kmp_info_t *thread = __kmp_threads[gtid];
   kmp_taskdata_t *current_task = thread->th.th_current_task;
@@ -6406,18 +6917,21 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
 
 //ME1
   kmp_int32 tid = __kmp_tid_from_gtid(gtid);
-#if DEBUG_PRINT_TASKLOOP_SPLIT_INFO
-  std::cout << "[JING] __kmp_taskloop: Task " << taskdata->td_task_id << ", thread " << tid << ", lowerbound = " << lower \
-  << ", upperbound = " << upper << ", stride = " << st << ", num_tasks_min = " << num_tasks_min << ", grainsize = " << grainsize \
-  << ", tc(iteration count) = " << tc << std::endl;
+#if DEBUG_PRINT_TASK_INFO
+  #pragma omp critical
+  {
+    std::cout << "\n------------------------------------------------------------------------------------------------------------------" << std::endl;
+    std::cout << "[JING] __kmp_taskloop: Taskloop " << taskdata->td_task_id << ", thread " << tid << ", lowerbound = " << lower << ", upperbound = " << upper << ", stride = " 
+    << st << ", num_tasks_min = " << num_tasks_min << ", grainsize = " << grainsize << ", tc(iteration count) = " << tc << std::endl;
+  }
 #endif
 //ME2
 
   if (tc == 0) {
     KA_TRACE(20, ("__kmp_taskloop(exit): T#%d zero-trip loop\n", gtid));
     // free the pattern task and exit
-    kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
 #if DEBUG_PRINT_TASK_INFO
+    kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
     #pragma omp critical
     {
       std::cout << "[JING] __kmp_taskloop: Pattern Task " << taskdata->td_task_id << " on thread " << __kmp_tid_from_gtid(gtid) << ": no execution!" << std::endl;
@@ -6454,20 +6968,13 @@ static void __kmp_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
   case 0: // Here we implemented ERASE scheduler since no schedule clause specified, we can choose the default
     //ME1
     taskdata->td_task_type = TASK_PATTERN;
+    taskdata->td_loop_iters = tc;
 #if COST_CLAUSE
     taskdata->td_cost = cost;
 #if DEBUG_PRINT_TASK_INFO
     #pragma omp critical
     {
-      printf("[JING] __kmp_taskloop: Task %d, grainsize = %llu, cost = %llu\n", taskdata->td_task_id, grainsize, cost);
-    }
-#endif
-#else
-    taskdata->td_loop_iters = tc; 
-#if DEBUG_PRINT_TASK_INFO
-    #pragma omp critical
-    {
-      printf("[JING] __kmp_taskloop: Task %d, grainsize = %d, iterations = %d \n", taskdata->td_task_id, grainsize, taskdata->td_loop_iters);
+      printf("[JING] __kmp_taskloop: Task %d, grainsize = %llu, cost = %llu, iterations = %d\n", taskdata->td_task_id, grainsize, cost, taskdata->td_loop_iters);
     }
 #endif
 #endif
@@ -6610,23 +7117,15 @@ void __kmpc_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
   //ME1
   {
     std::lock_guard<std::mutex> lock(init_mutex);
-    if(!scheduler_init){
-#if DEBUG_PRINT_THREAD_INFO     
-      std::cout << "[JING] Initializing ERASE scheduler..." << std::endl;
-#endif
-      __kmp_scheduler_init();
-      scheduler_init = true;
-    }
-    if(!performance_model_init){
+    if(!model_init){
 #if DEBUG_PRINT_THREAD_INFO
-      std::cout << "[JING] Initializing Performance Model..." << std::endl;
+      std::cout << "[JING] Reading performance and power model coefficients..." << std::endl;
 #endif
-      __kmp_ptt_init();
-      performance_model_init = true;
+      __kmp_model_init();
+      model_init = true;
     }
   } // Lock is released here when the scope ends
   //ME2 - Lock is not held during __kmp_taskloop call
-  // std::cout << "[RUNTIME] sched = " << sched << ", grainsize = " << grainsize << ", cost = " << cost << std::endl;
   __kmp_taskloop(loc, gtid, task, if_val, lb, ub, st, nogroup, sched, grainsize,
                  cost, 0, task_dup);
   KA_TRACE(20, ("__kmpc_taskloop(exit): T#%d\n", gtid));
@@ -6643,19 +7142,12 @@ void __kmpc_taskloop(ident_t *loc, int gtid, kmp_task_t *task, int if_val,
   //ME1
   {
     std::lock_guard<std::mutex> lock(init_mutex);
-    if(!scheduler_init){
-#if DEBUG_PRINT_THREAD_INFO     
-      std::cout << "[JING] Initializing ERASE scheduler..." << std::endl;
-#endif
-      __kmp_scheduler_init();
-      scheduler_init = true;
-    }
-    if(!performance_model_init){
+    if(!model_init){
 #if DEBUG_PRINT_THREAD_INFO
-      std::cout << "[JING] Initializing Performance Model..." << std::endl;
+      std::cout << "[JING] Reading performance and power model coefficients..." << std::endl;
 #endif
-      __kmp_ptt_init();
-      performance_model_init = true;
+      __kmp_model_init();
+      model_init = true;
     }
   } // Lock is released here when the scope ends
   //ME2 - Lock is not held during __kmp_taskloop call

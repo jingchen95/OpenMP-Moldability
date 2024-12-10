@@ -4686,10 +4686,10 @@ void __kmp_affinity_set_place(int gtid) {
   th->th.th_current_place = th->th.th_new_place;
 
   //ME1
-  // #if TX2
-  // th->th.th_affin_mask->zero();
-  // th->th.th_affin_mask->set(__kmp_get_tid());
-  // #endif
+// #if TX2
+//   th->th.th_affin_mask->zero();
+//   th->th.th_affin_mask->set(__kmp_get_tid());
+// #endif
   //ME2
 
   if (__kmp_affinity_verbose) {

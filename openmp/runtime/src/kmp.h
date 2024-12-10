@@ -110,7 +110,7 @@
 // Configs
 #define TASK_STEALING_POLICY ALL_TASK_STEALING_ALLOWED // Should be one of the three above
 #define SLEEP_DURATION 10us // Base sleep duration
-#define PERF_DISABLE 0 // 0 to enable perf, 1 to enable
+#define PERF_DISABLE 0
 // Only change the first variable,
 // 1 To disable the performance counters when no unknown task types are executing
 // 0 To always have perf active
@@ -124,7 +124,7 @@
 #define MAX_SLEEP_SHIFT 10
 
 // Debugging prints
-#define DEBUG_PRINT_ALL 1
+#define DEBUG_PRINT_ALL 0
 #define DEBUG_PRINT_THREAD_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASK_INFO 0 | DEBUG_PRINT_ALL
 #define DEBUG_PRINT_TASKLOOP_PERFORMANCE_MODEL_INFO 0 | DEBUG_PRINT_ALL
@@ -134,18 +134,27 @@
 
 #define COST_CLAUSE 1 // enable the cost() clause in the taskloop pragma
 
+#define ENERGY_MINIMIZATION 0 // enable the energy minimization mode, otherwise EDP minimization mode
+
 #define PARALLEL_COST 100
 // if exec time is less than this value (microseconds), no update in the performance model 
 // Reason: (1) the overhead of the parallelization is probably higher than the exec time of the task; 
 // (2) the exec time is too small to be accurately measured
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define customRound(x) ((x) >= 0.0 ? static_cast<int>((x) + 0.5) : static_cast<int>((x) - 0.5))
+
 // Hardcoded variables, Must be set for each machine
 #if TX2
 #define CLUSTER_AMOUNT  1 // Number of clusters
 #define CLUSTER_B_ACTIVE 0 // 1 if cluster B is active, 0 if not
 #define CLUSTER_A_SIZE 4 // threads on cluster A
 #define CLUSTER_B_SIZE 2 // threads on cluster B
+#define CPU_FREQ_AMOUNT 12 // Number of frequencies that supported by the CPU
+#define MEMORY_FREQ_AMOUNT 5 // Number of frequencies that supported by the memory
+#define FREQ_HIGH_IDX 0 // Highest frequency for training 
+#define FREQ_MED_IDX 6 // Medium frequency for training
+#define MODEL_NUM_COE 10 // Number of coefficients in the model (perf, power)
 #endif
 
 #if ALDERLAKE
@@ -155,8 +164,9 @@
 #define CLUSTER_B_SIZE 8 // threads on cluster B
 #endif
 
-
-#define CLUSTER_SIZE MAX(CLUSTER_A_SIZE, CLUSTER_B_SIZE)
+#define CLUSTER_MAX_SIZE MAX(CLUSTER_A_SIZE, CLUSTER_B_SIZE)
+// #define CLUSTER_SIZE(cluster_id) ((cluster_id) == 0 ? CLUSTER_A_SIZE : CLUSTER_B_SIZE)
+#define CLUSTER_SIZE(cluster_id) ((cluster_id) == 0 ? CLUSTER_A_SIZE : (CLUSTER_B_ACTIVE ? CLUSTER_B_SIZE : 0))
 
 // Cluster definitions...
 #define CLUSTER_A 0
@@ -184,7 +194,7 @@
 #define TASK_UNDEFINED 3
 #define TASK_PATTERN 4
 
-#define TASKLOOP_ID 20 // Add by Jing: taskloop id
+#define TASKLOOP_MAX_AMOUNT 30 // Add by Jing: taskloop id
 
 // Original plan was to read/calculate frequency online and use power values from tables
 // Currently only using the HIGH_FREQ_POWER in the task mapping algorithm
@@ -2703,11 +2713,12 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   //ME1
   kmp_uint32 td_unique_tid;
   kmp_uint8 td_no_steal; // flag for if the task is allowed to be stolen or not
-  kmp_uint8 td_taskwidth = 1; // Width of current task, for example if a taskloop is split into 4, it will be 4...
-  kmp_int8 td_cluster; // Schedules sets this to the cluster which is deemed optimal
+  kmp_int32 td_taskwidth = 1; // Width of current task, for example if a taskloop is split into 4, it will be 4...
+  kmp_int32 td_cluster; // Schedules sets this to the cluster which is deemed optimal
+  kmp_int32 td_cpu_freq_idx[CLUSTER_AMOUNT]; // Optimal CPU frequency for the task
+  kmp_int32 td_mem_freq_idx; // Optimal DDR frequency for the task
   kmp_uint8 td_task_type; // Task type (3): compute-bound, memory-bound, cache-intensive
   kmp_uint8 td_taskloop_id; // Taskloop id, used to identify the taskloop, same taskloop routine shares the same performance table
-  kmp_uint8 td_get_optimal; // Flag for if the taskloop has got the optimal schedule configuration
   kmp_uint64 td_loop_iters; // Number of iterations in the taskloop
 #if COST_CLAUSE
   kmp_uint64 td_cost; // Cost of the task
@@ -3230,20 +3241,24 @@ struct fortran_inx_info {
 
 //ME1
 struct kmp_performance {
-    kmp_uint32 frequencies[CLUSTER_AMOUNT][CLUSTER_SIZE]; // Frequency for each core for current execution times
-    kmp_uint32 execution_times[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_SIZE]; // predicted execution time for each task type
-    kmp_uint32 performance_table[TASKLOOP_ID][CLUSTER_AMOUNT][CLUSTER_SIZE]; // Add by Jing: Performance table for each taskloop
-    kmp_uint8 get_optimal[TASKLOOP_ID]; // Add by Jing: Flag for if the taskloop has got the optimal schedule configuration
-    kmp_uint8 optimal_cluster[TASKLOOP_ID]; // Add by Jing: Optimal scheduled cluster for each taskloop
-    kmp_uint8 optimal_width[TASKLOOP_ID]; // Add by Jing: Optimal scheduled width for each taskloop
+    // kmp_uint32 frequencies[CLUSTER_AMOUNT][CLUSTER_SIZE]; // Frequency for each core for current execution times
+    kmp_uint32 execution_times[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_MAX_SIZE]; // predicted execution time for each task type
+    kmp_uint32 performance_table[MEMORY_FREQ_AMOUNT][CPU_FREQ_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE][TASKLOOP_MAX_AMOUNT]; // Add by Jing: Performance table for each taskloop
+    double cpu_power_table[MEMORY_FREQ_AMOUNT][CPU_FREQ_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE][TASKLOOP_MAX_AMOUNT]; // Add by Jing: CPU power table for each taskloop
+    double ddr_power_table[MEMORY_FREQ_AMOUNT][CPU_FREQ_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE][TASKLOOP_MAX_AMOUNT]; // Add by Jing: Cache power table for each taskloop
+    kmp_uint8 get_optimal[TASKLOOP_MAX_AMOUNT]; // Add by Jing: Flag for if the taskloop has got the optimal schedule configuration
+    kmp_uint8 opt_cluster[TASKLOOP_MAX_AMOUNT]; // Add by Jing: Optimal scheduled cluster for each taskloop
+    kmp_uint8 opt_width[TASKLOOP_MAX_AMOUNT]; // Add by Jing: Optimal scheduled width for each taskloop
+    kmp_uint8 opt_cpu_freq_idx[TASKLOOP_MAX_AMOUNT][CLUSTER_AMOUNT]; // Add by Jing: Optimal CPU frequency for each taskloop
+    kmp_uint8 opt_mem_freq_idx[TASKLOOP_MAX_AMOUNT]; // Add by Jing: Optimal DDR frequency for each taskloop
 };
 
 struct kmp_scheduler {
     kmp_uint8 num_clusters = CLUSTER_AMOUNT; // Number of clusters
-    kmp_int32 cluster_tids[CLUSTER_AMOUNT][CLUSTER_SIZE]; // thread identifiers "tid" for each cluster
+    kmp_int32 cluster_tids[CLUSTER_AMOUNT][CLUSTER_MAX_SIZE]; // thread identifiers "tid" for each cluster
     kmp_uint8 cluster_tid_entries[CLUSTER_AMOUNT]; // thread counter for each cluster
     kmp_uint32 idle_power[CLUSTER_AMOUNT];
-    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES][CLUSTER_SIZE] = 
+    kmp_uint32 runtime_power[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_POWER_RUNTIME_SAMPLES][CLUSTER_MAX_SIZE] = 
     {
       //Cluster
       { 
@@ -3280,7 +3295,7 @@ struct kmp_scheduler {
     };
     
      //TODO not finished
-    kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_SIZE]; // Threads status, 1 if awake, 0 sleeping
+    kmp_uint8 thread_active[CLUSTER_AMOUNT][CLUSTER_MAX_SIZE+1]; // Threads status, 1 if awake, 0 sleeping
 };
 
 //ME2
