@@ -136,6 +136,9 @@
 
 #define ENERGY_MINIMIZATION 0 // enable the energy minimization mode, otherwise EDP minimization mode
 
+
+// #define TRAINING_ITERATIONS 2 // Number of training iterations for models
+
 #define PARALLEL_COST 100
 // if exec time is less than this value (microseconds), no update in the performance model 
 // Reason: (1) the overhead of the parallelization is probably higher than the exec time of the task; 
@@ -3244,6 +3247,7 @@ struct kmp_performance {
     // kmp_uint32 frequencies[CLUSTER_AMOUNT][CLUSTER_SIZE]; // Frequency for each core for current execution times
     kmp_uint32 execution_times[CLUSTER_AMOUNT][TASK_TYPES][CLUSTER_MAX_SIZE]; // predicted execution time for each task type
     kmp_uint32 performance_table[MEMORY_FREQ_AMOUNT][CPU_FREQ_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE][TASKLOOP_MAX_AMOUNT]; // Add by Jing: Performance table for each taskloop
+    // kmp_uint32 ptt_execution_count[MEMORY_FREQ_AMOUNT][CPU_FREQ_AMOUNT][TASKLOOP_MAX_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE];
     double cpu_power_table[MEMORY_FREQ_AMOUNT][CPU_FREQ_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE][TASKLOOP_MAX_AMOUNT]; // Add by Jing: CPU power table for each taskloop
     double ddr_power_table[MEMORY_FREQ_AMOUNT][CPU_FREQ_AMOUNT][CLUSTER_AMOUNT][CLUSTER_MAX_SIZE][TASKLOOP_MAX_AMOUNT]; // Add by Jing: Cache power table for each taskloop
     kmp_uint8 get_optimal[TASKLOOP_MAX_AMOUNT]; // Add by Jing: Flag for if the taskloop has got the optimal schedule configuration
